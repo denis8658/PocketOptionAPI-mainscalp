@@ -1,7 +1,5 @@
-"""
-Requirements adicionais para usar o servidor FastAPI
-Instale com: pip install -r requirements-api.txt
-"""
+# Requirements adicionais para usar o servidor FastAPI
+# Instale com: pip install -r requirements-api.txt
 
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
