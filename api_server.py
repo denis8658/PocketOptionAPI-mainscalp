@@ -129,7 +129,7 @@ class ClientManager:
                 region=config.region,
                 uid=config.uid,
                 platform=config.platform,
-                persistent_connection=config.persistent_connection,
+                persistent_connection=False,
                 auto_reconnect=config.auto_reconnect,
                 enable_logging=True
             )
