@@ -7,12 +7,23 @@ import httpx
 import asyncio
 from typing import Optional, List, Dict, Any
 import json
+from config import get_base_url, is_production
 
 
 class PocketOptionAPIClient:
     """Cliente para consumir endpoints REST do PocketOption"""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: Optional[str] = None):
+        """
+        Inicializa o cliente
+        
+        Args:
+            base_url: URL base da API. Se None, usa configuração automática
+        """
+        if base_url is None:
+            base_url = get_base_url()
+            print(f"🔗 Usando URL base: {base_url} ({'Produção' if is_production() else 'Desenvolvimento'})")
+        
         self.base_url = base_url
         self.client = httpx.AsyncClient(base_url=base_url)
     
@@ -124,8 +135,14 @@ async def main():
     # Seu SSID - Obtenha do navegador como explicado no README
     SSID = '42["auth",{"session":"YOUR_SESSION_HERE","isDemo":1,"uid":123456,"platform":1}]'
     
-    # Criar cliente
-    client = PocketOptionAPIClient(base_url="http://localhost:8000")
+    # Criar cliente (usa configuração automática)
+    client = PocketOptionAPIClient()  # Auto-detect dev/prod
+    
+    # Ou especificar manualmente:
+    # client = PocketOptionAPIClient(base_url="http://localhost:8000")  # Desenvolvimento
+    # client = PocketOptionAPIClient(base_url="https://pocketoptionapi-mainscalp.railway.internal")  # Produção
+    
+    try:
     
     try:
         # 1. Verificar saúde do servidor
@@ -139,7 +156,8 @@ async def main():
         init_result = await client.init_client(
             ssid=SSID,
             is_demo=True,
-            persistent_connection=True,
+            persistent_connection=False,
+            connect_after_init=True,
             auto_reconnect=True
         )
         print(f"   {init_result['message']}")
@@ -222,7 +240,8 @@ curl -X POST "http://localhost:8000/api/init" \\
   -d '{
     "ssid": "42[\\"auth\\",{\\"session\\":\\"YOUR_SESSION\\",\\"isDemo\\":1,\\"uid\\":123456,\\"platform\\":1}]",
     "is_demo": true,
-    "persistent_connection": true
+    "persistent_connection": false,
+    "connect_after_init": true
   }'
     """,
     

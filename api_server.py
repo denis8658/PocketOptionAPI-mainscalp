@@ -5,7 +5,7 @@ Expõe a API PocketOption como endpoints REST para consumo externo
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 import asyncio
 from datetime import datetime
@@ -34,6 +34,28 @@ class ClientConfig(BaseModel):
     platform: int = Field(default=1, description="Platform (1=web, 3=mobile)")
     persistent_connection: bool = Field(default=False, description="Conexão persistente")
     auto_reconnect: bool = Field(default=True, description="Auto-reconexão")
+
+
+    connect_after_init: bool = Field(default=False, description="Conectar automaticamente apos inicializar")
+
+    @field_validator("ssid")
+    @classmethod
+    def normalize_ssid(cls, value: str) -> str:
+        """Accept the pasted SSID and normalize common copy/paste issues."""
+        if not isinstance(value, str):
+            raise ValueError("SSID deve ser uma string")
+
+        ssid = "".join(value.splitlines()).strip()
+
+        if len(ssid) >= 2 and ssid[0] == ssid[-1] and ssid[0] in ("'", '"'):
+            ssid = ssid[1:-1].strip()
+
+        ssid = ssid.replace(r"\"", '"')
+
+        if not ssid:
+            raise ValueError("SSID nao pode estar vazio")
+
+        return ssid
 
 
 class PlaceOrderRequest(BaseModel):
@@ -225,6 +247,17 @@ async def initialize_client(config: ClientConfig):
     5. Copie a mensagem completa
     """
     await client_manager.initialize(config)
+
+    if config.connect_after_init:
+        connected = await client_manager.connect()
+        if not connected:
+            raise HTTPException(status_code=500, detail="Cliente inicializado, mas falhou ao conectar")
+        return {
+            "status": "connected",
+            "demo": str(config.is_demo),
+            "message": "Cliente inicializado e conectado com sucesso"
+        }
+
     return {
         "status": "initialized",
         "demo": str(config.is_demo),

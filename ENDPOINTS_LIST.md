@@ -75,8 +75,9 @@ curl -X POST "http://localhost:8000/api/init" \
   -d '{
     "ssid": "42[\"auth\",{\"session\":\"abc123...\",\"isDemo\":1,\"uid\":123456,\"platform\":1}]",
     "is_demo": true,
-    "persistent_connection": true,
-    "auto_reconnect": true
+    "persistent_connection": false,
+    "auto_reconnect": true,
+    "connect_after_init": true
   }'
 ```
 
@@ -90,6 +91,7 @@ curl -X POST "http://localhost:8000/api/init" \
 | `platform` | integer | ❌ | 1 | Platform (1=web, 3=mobile) |
 | `persistent_connection` | boolean | ❌ | false | Conexão persistente |
 | `auto_reconnect` | boolean | ❌ | true | Auto-reconexão |
+| `connect_after_init` | boolean | ❌ | false | Conectar automaticamente apos inicializar |
 
 **Response (200):**
 ```json

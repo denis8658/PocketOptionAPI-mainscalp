@@ -129,13 +129,26 @@ Resposta esperada:
 #### Inicializar Cliente
 
 ```bash
+# Desenvolvimento
 curl -X POST "http://localhost:8000/api/init" \
   -H "Content-Type: application/json" \
   -d '{
     "ssid": "42[\"auth\",{\"session\":\"YOUR_SESSION_HERE\",\"isDemo\":1,\"uid\":123456,\"platform\":1}]",
     "is_demo": true,
-    "persistent_connection": true,
-    "auto_reconnect": true
+    "persistent_connection": false,
+    "auto_reconnect": true,
+    "connect_after_init": true
+  }'
+
+# Produção (Railway)
+curl -X POST "https://pocketoptionapi-mainscalp.railway.internal/api/init" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ssid": "42[\"auth\",{\"session\":\"YOUR_SESSION_HERE\",\"isDemo\":1,\"uid\":123456,\"platform\":1}]",
+    "is_demo": true,
+    "persistent_connection": false,
+    "auto_reconnect": true,
+    "connect_after_init": true
   }'
 ```
 
@@ -286,6 +299,53 @@ async def main():
     finally:
         await client.disconnect()
         await client.close()
+
+---
+
+## 🔧 Configuração de URLs
+
+### URLs Base
+
+- **Desenvolvimento:** `http://localhost:8000`
+- **Produção:** `https://pocketoptionapi-mainscalp.railway.internal`
+
+### Configuração Automática (Python)
+
+```python
+from config import get_base_url, is_production
+
+# Auto-detect baseado em variáveis de ambiente
+base_url = get_base_url()  # Retorna produção se RAILWAY_ENVIRONMENT=1
+
+# Ou especificar manualmente
+base_url = get_base_url('prod')  # Força produção
+base_url = get_base_url('dev')   # Força desenvolvimento
+
+# Verificar ambiente
+if is_production():
+    print("Rodando em produção")
+```
+
+### Variáveis de Ambiente
+
+Para forçar produção em desenvolvimento:
+```bash
+export PRODUCTION=1
+# ou
+export RAILWAY_ENVIRONMENT=production
+```
+
+### Cliente com Configuração Automática
+
+```python
+from examples.external_client_example import PocketOptionAPIClient
+
+# Usa configuração automática
+client = PocketOptionAPIClient()  # Auto-detect dev/prod
+
+# Ou especificar manualmente
+client = PocketOptionAPIClient("https://pocketoptionapi-mainscalp.railway.internal")
+```
 
 asyncio.run(main())
 ```
