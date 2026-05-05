@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 import asyncio
+import json
 from datetime import datetime
 import uvicorn
 from loguru import logger
@@ -24,6 +25,38 @@ from pocketoptionapi_async import (
 )
 
 # ==================== MODELS ====================
+
+def parse_auth_payload(ssid: str) -> Dict[str, Any]:
+    """Parse the JSON payload from a complete PocketOption auth SSID."""
+    ssid = ssid.strip()
+
+    if not ssid.startswith('42["auth",') and r'\"auth\"' in ssid:
+        try:
+            ssid = bytes(ssid, "utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+
+    json_start = ssid.find("{")
+    json_end = ssid.rfind("}") + 1
+
+    if not ssid.startswith('42["auth",') or json_start == -1 or json_end <= json_start:
+        return {}
+
+    json_part = ssid[json_start:json_end]
+
+    try:
+        return json.loads(json_part)
+    except json.JSONDecodeError:
+        # Some HTTP clients send the whole SSID escaped one extra time.
+        try:
+            unescaped = bytes(ssid, "utf-8").decode("unicode_escape")
+            json_start = unescaped.find("{")
+            json_end = unescaped.rfind("}") + 1
+            if json_start != -1 and json_end > json_start:
+                return json.loads(unescaped[json_start:json_end])
+        except Exception:
+            pass
+        raise
 
 class ClientConfig(BaseModel):
     """Configuração para inicializar cliente"""
@@ -50,10 +83,22 @@ class ClientConfig(BaseModel):
         if len(ssid) >= 2 and ssid[0] == ssid[-1] and ssid[0] in ("'", '"'):
             ssid = ssid[1:-1].strip()
 
-        ssid = ssid.replace(r"\"", '"')
+        if not ssid.startswith('42["auth",') and r'\"auth\"' in ssid:
+            try:
+                unescaped = bytes(ssid, "utf-8").decode("unicode_escape").strip()
+                if unescaped.startswith('42["auth",'):
+                    ssid = unescaped
+            except Exception:
+                pass
 
         if not ssid:
             raise ValueError("SSID nao pode estar vazio")
+
+        if ssid.startswith('42["auth",'):
+            try:
+                parse_auth_payload(ssid)
+            except Exception as e:
+                raise ValueError(f"SSID invalido: {e}") from e
 
         return ssid
 
@@ -123,18 +168,28 @@ class ClientManager:
     async def initialize(self, config: ClientConfig) -> bool:
         """Inicializa o cliente"""
         try:
+            auth_payload = parse_auth_payload(config.ssid)
+            is_demo = bool(auth_payload.get("isDemo", 1 if config.is_demo else 0))
+            uid = int(auth_payload.get("uid", config.uid))
+            platform = int(auth_payload.get("platform", config.platform))
+
             self.client = AsyncPocketOptionClient(
                 ssid=config.ssid,
-                is_demo=config.is_demo,
+                is_demo=is_demo,
                 region=config.region,
-                uid=config.uid,
-                platform=config.platform,
+                uid=uid,
+                platform=platform,
                 persistent_connection=False,
                 auto_reconnect=config.auto_reconnect,
                 enable_logging=True
             )
-            self.config = config
-            logger.info("Cliente inicializado com sucesso")
+            self.config = config.model_copy(update={
+                "is_demo": is_demo,
+                "uid": uid,
+                "platform": platform,
+                "persistent_connection": False,
+            })
+            logger.info(f"Cliente inicializado com sucesso (demo={is_demo}, uid={uid}, platform={platform})")
             return True
         except Exception as e:
             logger.error(f"Erro ao inicializar cliente: {e}")
@@ -254,13 +309,13 @@ async def initialize_client(config: ClientConfig):
             raise HTTPException(status_code=500, detail="Cliente inicializado, mas falhou ao conectar")
         return {
             "status": "connected",
-            "demo": str(config.is_demo),
+            "demo": str(client_manager.config.is_demo if client_manager.config else config.is_demo),
             "message": "Cliente inicializado e conectado com sucesso"
         }
 
     return {
         "status": "initialized",
-        "demo": str(config.is_demo),
+        "demo": str(client_manager.config.is_demo if client_manager.config else config.is_demo),
         "message": "Cliente inicializado. Agora use POST /api/connect"
     }
 

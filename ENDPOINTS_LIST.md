@@ -74,12 +74,13 @@ curl -X POST "http://localhost:8000/api/init" \
   -H "Content-Type: application/json" \
   -d '{
     "ssid": "42[\"auth\",{\"session\":\"abc123...\",\"isDemo\":1,\"uid\":123456,\"platform\":1}]",
-    "is_demo": true,
     "persistent_connection": false,
     "auto_reconnect": true,
     "connect_after_init": true
   }'
 ```
+
+Para conta real ou demo, envie o SSID completo colado pelo usuario. A API extrai automaticamente `isDemo`, `uid` e `platform` do proprio SSID.
 
 **Request Body:**
 | Campo | Tipo | Obrigatório | Default | Descrição |
