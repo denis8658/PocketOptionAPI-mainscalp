@@ -380,7 +380,7 @@ class AsyncPocketOptionClient:
 
         logger.info("Disconnected successfully")
 
-    async def get_balance(self) -> Balance:
+    async def get_balance(self, force_refresh: bool = False) -> Balance:
         """
         Get current account balance
 
@@ -391,7 +391,7 @@ class AsyncPocketOptionClient:
             raise ConnectionError("Not connected to PocketOption")
 
         # Request balance update if needed
-        if not self._balance or (datetime.now() - self._balance.last_updated).seconds > 60:
+        if force_refresh or not self._balance or (datetime.now() - self._balance.last_updated).seconds > 60:
             await self._request_balance_update()
 
             # Wait a bit for balance to be received
@@ -399,6 +399,20 @@ class AsyncPocketOptionClient:
 
         if not self._balance:
             raise PocketOptionError("Balance data not available")
+
+        return self._balance
+
+    async def refresh_balance(self) -> Optional[Balance]:
+        """Request a fresh balance snapshot from the server."""
+        if not self.is_connected:
+            return self._balance
+
+        try:
+            await self._request_balance_update()
+            await asyncio.sleep(1)
+        except Exception as e:
+            if self.enable_logging:
+                logger.warning(f"Failed to refresh balance: {e}")
 
         return self._balance
 
@@ -1164,7 +1178,8 @@ class AsyncPocketOptionClient:
                             logger.success(
                                 f" Order {active_order.order_id} completed via JSON data: {status.value} - Profit: ${profit:.2f}"
                             )
-                            await self._emit_event("order_closed", result)
+                        await self.refresh_balance()
+                        await self._emit_event("order_closed", result)
 
     async def _emit_event(self, event: str, data: Any) -> None:
         """Emit event to registered callbacks"""
@@ -1218,6 +1233,7 @@ class AsyncPocketOptionClient:
         """Handle order closed event"""
         if self.enable_logging:
             logger.info(f"📊 Order closed: {data}")
+        await self.refresh_balance()
         await self._emit_event("order_closed", data)
 
     async def _on_stream_update(self, data: Dict[str, Any]) -> None:

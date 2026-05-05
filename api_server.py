@@ -143,7 +143,20 @@ class OrderResponse(BaseModel):
     asset: str
     direction: str
     timeframe: int
+    expires_at: Optional[str] = None
     message: Optional[str] = None
+
+
+class OrderResultResponse(BaseModel):
+    """Response com resultado final da ordem"""
+    order_id: str
+    result: str
+    completed: bool
+    status: str
+    profit: float = 0
+    balance_after: Optional[float] = None
+    currency: Optional[str] = None
+    timeout: bool = False
 
 
 class CandleData(BaseModel):
@@ -408,21 +421,23 @@ async def place_order(
         direction = OrderDirection.CALL if request.direction.upper() == "CALL" else OrderDirection.PUT
         
         # Colocar ordem
+        duration_seconds = request.timeframe * 60
         order_result = await client.place_order(
             asset=request.asset,
             direction=direction,
             amount=request.amount,
-            timeframe=request.timeframe,
+            duration=duration_seconds,
         )
         
         return OrderResponse(
-            request_id=order_result.request_id,
+            request_id=order_result.order_id,
             status=order_result.status.value if hasattr(order_result.status, 'value') else str(order_result.status),
             amount=order_result.amount,
             asset=order_result.asset,
             direction=order_result.direction.value if hasattr(order_result.direction, 'value') else str(order_result.direction),
-            timeframe=order_result.timeframe,
-            message=order_result.message
+            timeframe=int(order_result.duration / 60),
+            expires_at=order_result.expires_at.isoformat(),
+            message=order_result.error_message
         )
     except Exception as e:
         logger.error(f"Erro ao colocar ordem: {e}")
@@ -436,19 +451,51 @@ async def get_active_orders(client: AsyncPocketOptionClient = Depends(get_client
         orders = await client.get_active_orders()
         return [
             OrderResponse(
-                request_id=order.request_id,
+                request_id=order.order_id,
                 status=order.status.value if hasattr(order.status, 'value') else str(order.status),
                 amount=order.amount,
                 asset=order.asset,
                 direction=order.direction.value if hasattr(order.direction, 'value') else str(order.direction),
-                timeframe=order.timeframe,
-                message=order.message
+                timeframe=int(order.duration / 60),
+                expires_at=order.expires_at.isoformat(),
+                message=order.error_message
             )
             for order in orders
         ]
     except Exception as e:
         logger.error(f"Erro ao obter ordens ativas: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao obter ordens: {str(e)}")
+
+
+@app.get("/api/order/result/{order_id}", tags=["Orders"], response_model=OrderResultResponse)
+async def get_order_result(
+    order_id: str,
+    timeout: float = 180.0,
+    client: AsyncPocketOptionClient = Depends(get_client)
+):
+    """Aguarda e retorna o resultado final da ordem: win, loss, draw ou timeout."""
+    try:
+        result = await client.check_win(order_id, max_wait_time=timeout)
+        if not result:
+            raise HTTPException(status_code=404, detail="Resultado da ordem nao encontrado")
+
+        balance = await client.get_balance(force_refresh=True) if result.get("completed", False) else None
+
+        return OrderResultResponse(
+            order_id=result.get("order_id", order_id),
+            result=result.get("result", "unknown"),
+            completed=bool(result.get("completed", False)),
+            status=result.get("status", result.get("result", "unknown")),
+            profit=float(result.get("profit", 0) or 0),
+            balance_after=balance.balance if balance else None,
+            currency=balance.currency if balance else None,
+            timeout=bool(result.get("timeout", False)),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao verificar resultado da ordem: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao verificar resultado da ordem: {str(e)}")
 
 
 # ==================== DADOS DE MERCADO ====================
