@@ -495,3 +495,28 @@ Obtenha novo SSID do navegador a cada 24h
 
 **Versão:** 2.0.1  
 **Última atualização:** 2024-01-15
+
+---
+
+## Market Data Cache
+
+### GET `/api/ticks`
+Obtem os ultimos ticks/precos em cache.
+
+```bash
+curl -X GET "http://localhost:8000/api/ticks"
+```
+
+### GET `/api/ticks/{asset}`
+Obtem o ultimo tick/preco conhecido de um ativo.
+
+```bash
+curl -X GET "http://localhost:8000/api/ticks/EURUSD_otc"
+```
+
+### GET `/api/market/cache`
+Obtem resumo do cache de candles e ticks alimentado pelo WebSocket.
+
+```bash
+curl -X GET "http://localhost:8000/api/market/cache"
+```

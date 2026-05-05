@@ -97,6 +97,8 @@ class AsyncPocketOptionClient:
         self._event_callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self._payout_cache: Dict[str, Optional[float]] = {}  # Cache for payout data
         self._asset_info: Dict[str, Any] = {}  # Store asset information from payout messages
+        self._tick_cache: Dict[str, Dict[str, Any]] = {}  # Last known price by asset
+        self._last_stream_update: Optional[Dict[str, Any]] = None
         # Setup event handlers for websocket messages
         self._setup_event_handlers()
 
@@ -161,6 +163,14 @@ class AsyncPocketOptionClient:
     def get_payout(self, asset: str) -> Optional[float]:
         """Get cached payout rate for the given asset symbol, or None if unavailable."""
         return self._payout_cache.get(asset)
+
+    def get_latest_ticks(self) -> Dict[str, Dict[str, Any]]:
+        """Return the latest tick/price cache keyed by asset."""
+        return self._tick_cache.copy()
+
+    def get_latest_tick(self, asset: str) -> Optional[Dict[str, Any]]:
+        """Return the latest known tick/price for one asset."""
+        return self._tick_cache.get(asset)
 
     def _setup_event_handlers(self):
         """Setup WebSocket event handlers"""
@@ -487,6 +497,7 @@ class AsyncPocketOptionClient:
                 # Cache results
                 cache_key = f"{asset}_{timeframe_seconds}"
                 self._candles_cache[cache_key] = candles
+                self._update_tick_from_candles(asset, timeframe_seconds, candles)
 
                 logger.info(f"Retrieved {len(candles)} candles for {asset}")
                 return candles
@@ -1214,11 +1225,66 @@ class AsyncPocketOptionClient:
         if self.enable_logging:
             logger.debug(f"📡 Stream update: {data}")
 
+        if isinstance(data, dict):
+            self._last_stream_update = data
+            self._update_tick_cache_from_stream(data)
+
         # Check if this is candle data from changeSymbol subscription
-        if "asset" in data and "period" in data and ("candles" in data or "data" in data):
+        if isinstance(data, dict) and "asset" in data and "period" in data and ("candles" in data or "data" in data):
             await self._handle_candles_stream(data)
 
         await self._emit_event("stream_update", data)
+
+    def _update_tick_from_candles(self, asset: str, timeframe: int, candles: List[Candle]) -> None:
+        """Use the latest candle close as the latest known market tick."""
+        if not candles:
+            return
+
+        last_candle = max(candles, key=lambda candle: candle.timestamp)
+        self._tick_cache[asset] = {
+            "asset": asset,
+            "price": last_candle.close,
+            "timestamp": int(last_candle.timestamp.timestamp()),
+            "time": last_candle.timestamp.isoformat(),
+            "source": "candles",
+            "timeframe": timeframe,
+        }
+
+    def _update_tick_cache_from_stream(self, data: Dict[str, Any]) -> None:
+        """Extract the latest price from stream payloads when available."""
+        asset = data.get("asset") or data.get("symbol") or data.get("active")
+        if not asset:
+            return
+
+        price = data.get("price") or data.get("rate") or data.get("value") or data.get("close")
+        timestamp = data.get("timestamp") or data.get("time") or int(time.time())
+
+        candle_data = data.get("data") or data.get("candles")
+        if isinstance(candle_data, list) and candle_data:
+            last_item = candle_data[-1]
+            if isinstance(last_item, dict):
+                price = last_item.get("close") or last_item.get("price") or last_item.get("rate") or price
+                timestamp = last_item.get("time") or last_item.get("timestamp") or timestamp
+            elif isinstance(last_item, (list, tuple)) and len(last_item) >= 3:
+                timestamp = last_item[0]
+                price = last_item[2]
+
+        if price is None:
+            return
+
+        try:
+            timestamp_int = int(float(timestamp))
+            self._tick_cache[str(asset)] = {
+                "asset": str(asset),
+                "price": float(price),
+                "timestamp": timestamp_int,
+                "time": datetime.fromtimestamp(timestamp_int).isoformat(),
+                "source": "stream",
+                "timeframe": data.get("period"),
+            }
+        except Exception as e:
+            if self.enable_logging:
+                logger.debug(f"Could not update tick cache from stream: {e}")
 
     async def _on_candles_received(self, data: Dict[str, Any]) -> None:
         """Handle candles data received"""
@@ -1272,6 +1338,8 @@ class AsyncPocketOptionClient:
                 if not future.done():
                     candles = self._parse_stream_candles(data, asset, period)
                     if candles:
+                        self._candles_cache[f"{asset}_{period}"] = candles
+                        self._update_tick_from_candles(asset, int(period), candles)
                         future.set_result(candles)
                         if self.enable_logging:
                             logger.info(

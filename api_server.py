@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 import asyncio
 import json
+import time
 from datetime import datetime
 import uvicorn
 from loguru import logger
@@ -57,6 +58,13 @@ def parse_auth_payload(ssid: str) -> Dict[str, Any]:
         except Exception:
             pass
         raise
+
+
+def to_unix_timestamp(value: Any) -> int:
+    """Convert datetime or numeric timestamps to Unix seconds for REST responses."""
+    if isinstance(value, datetime):
+        return int(value.timestamp())
+    return int(float(value))
 
 class ClientConfig(BaseModel):
     """Configuração para inicializar cliente"""
@@ -140,11 +148,14 @@ class OrderResponse(BaseModel):
 
 class CandleData(BaseModel):
     """Dados de uma vela"""
+    asset: Optional[str] = None
+    timeframe: Optional[int] = None
     open: float
     close: float
     high: float
     low: float
     timestamp: int
+    volume: Optional[float] = None
 
 
 class HealthCheckResponse(BaseModel):
@@ -465,14 +476,18 @@ async def get_candles(
             timeframe=request.timeframe,
             count=request.count
         )
+        candles = sorted(candles, key=lambda c: c.timestamp, reverse=True)[:request.count]
         
         return [
             CandleData(
+                asset=getattr(c, "asset", request.asset),
+                timeframe=getattr(c, "timeframe", request.timeframe),
                 open=c.open,
                 close=c.close,
                 high=c.high,
                 low=c.low,
-                timestamp=c.timestamp
+                timestamp=to_unix_timestamp(c.timestamp),
+                volume=getattr(c, "volume", None),
             )
             for c in candles
         ]
@@ -494,6 +509,47 @@ async def get_assets(client: AsyncPocketOptionClient = Depends(get_client)):
     except Exception as e:
         logger.error(f"Erro ao obter ativos: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao obter ativos: {str(e)}")
+
+
+@app.get("/api/ticks", tags=["Market Data"], response_model=Dict[str, Any])
+async def get_ticks(client: AsyncPocketOptionClient = Depends(get_client)):
+    """Obtém o cache dos últimos ticks/preços recebidos."""
+    return {
+        "ticks": client.get_latest_ticks(),
+        "count": len(client.get_latest_ticks()),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/ticks/{asset}", tags=["Market Data"], response_model=Dict[str, Any])
+async def get_tick(asset: str, client: AsyncPocketOptionClient = Depends(get_client)):
+    """Obtém o último tick/preço conhecido de um ativo."""
+    tick = client.get_latest_tick(asset)
+    if not tick:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Nenhum tick em cache para {asset}. Chame /api/candles para esse ativo ou aguarde stream.",
+        )
+    return tick
+
+
+@app.get("/api/market/cache", tags=["Market Data"], response_model=Dict[str, Any])
+async def get_market_cache(client: AsyncPocketOptionClient = Depends(get_client)):
+    """Obtém resumo do cache de dados de mercado alimentado pelo WebSocket."""
+    return {
+        "connected": client.is_connected,
+        "ticks": client.get_latest_ticks(),
+        "candles": {
+            key: {
+                "count": len(value),
+                "last_timestamp": to_unix_timestamp(max(value, key=lambda c: c.timestamp).timestamp) if value else None,
+                "last_close": max(value, key=lambda c: c.timestamp).close if value else None,
+            }
+            for key, value in client._candles_cache.items()
+        },
+        "last_stream_update": client._last_stream_update,
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # ==================== ERROR HANDLERS ====================
