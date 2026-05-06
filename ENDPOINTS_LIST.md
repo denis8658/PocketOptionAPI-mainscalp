@@ -498,6 +498,60 @@ Obtenha novo SSID do navegador a cada 24h
 
 ---
 
+## Atualizacao: Payouts e Expiracao em Segundos
+
+### POST `/api/order/place`
+
+Formato recomendado para entradas em segundos:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "direction": "CALL",
+  "amount": 1,
+  "duration_seconds": 30
+}
+```
+
+`direction` aceita `CALL` para compra e `PUT` para venda.
+
+`duration_seconds` e o tempo exato de expiracao em segundos. Minimo aceito pelo cliente interno: `5`.
+
+O formato antigo continua funcionando:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "direction": "PUT",
+  "amount": 1,
+  "timeframe": 1
+}
+```
+
+Nesse caso, `timeframe: 1` vira `60` segundos.
+
+### GET `/api/payouts`
+
+Lista payouts recebidos pelo WebSocket:
+
+```bash
+curl -X GET "http://localhost:8000/api/payouts"
+```
+
+### GET `/api/payouts/{asset}`
+
+Busca payout de um ativo:
+
+```bash
+curl -X GET "http://localhost:8000/api/payouts/EURUSD_otc"
+```
+
+### GET `/api/assets`
+
+Tambem retorna `payouts` e `asset_info` quando esses dados ja foram recebidos pelo WebSocket.
+
+---
+
 ## Market Data Cache
 
 ### GET `/api/ticks`

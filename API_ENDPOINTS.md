@@ -124,6 +124,28 @@ Resposta esperada:
 
 ## 💻 Exemplos de Uso
 
+### Ordens com expiracao em segundos
+
+Use `duration_seconds` para enviar o tempo exato de expiracao:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "direction": "CALL",
+  "amount": 1,
+  "duration_seconds": 30
+}
+```
+
+`timeframe` em minutos continua aceito por compatibilidade.
+
+### Payouts
+
+```bash
+curl -X GET "http://localhost:8000/api/payouts"
+curl -X GET "http://localhost:8000/api/payouts/EURUSD_otc"
+```
+
 ### 1️⃣ Com curl
 
 #### Inicializar Cliente
