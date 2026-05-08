@@ -162,6 +162,7 @@ class AsyncWebSocketClient:
         Returns:
             bool: True if connected successfully
         """
+        connection_errors: List[str] = []
         for url in urls:
             try:
                 logger.info(f"Attempting to connect to {url}")
@@ -181,7 +182,7 @@ class AsyncWebSocketClient:
                         ping_timeout=CONNECTION_SETTINGS["ping_timeout"],
                         close_timeout=CONNECTION_SETTINGS["close_timeout"],
                     ),
-                    timeout=10.0,
+                    timeout=CONNECTION_SETTINGS.get("connect_timeout", 4),
                 )
                 self.websocket = ws  # type: ignore
                 # Update connection info
@@ -208,13 +209,18 @@ class AsyncWebSocketClient:
                 return True
 
             except Exception as e:
-                logger.warning(f"Failed to connect to {url}: {e}")
+                error_message = f"{url}: {type(e).__name__}: {e}"
+                connection_errors.append(error_message)
+                logger.warning(f"Failed to connect to {url}: {type(e).__name__}: {e}")
                 if self.websocket:
                     await self.websocket.close()
                     self.websocket = None
                 continue
 
-        raise ConnectionError("Failed to connect to any WebSocket endpoint")
+        raise ConnectionError(
+            "Failed to connect to any WebSocket endpoint. "
+            + " | ".join(connection_errors[-3:])
+        )
 
     async def _handle_payout_message(self, json_message: List[List[Any]]) -> None:
         """

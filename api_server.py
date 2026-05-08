@@ -70,6 +70,24 @@ def to_unix_timestamp(value: Any) -> int:
         return int(value.timestamp())
     return int(float(value))
 
+
+def classify_connection_errors(errors: List[Dict[str, str]]) -> str:
+    """Classifica falhas de conexao sem expor SSID."""
+    combined = " ".join(error.get("error", "").lower() for error in errors)
+
+    if not combined:
+        return "unknown"
+    if "access" in combined or "acesso negado" in combined or "permission" in combined:
+        return "network_access_denied"
+    if "authentication" in combined or "auth" in combined or "ssid" in combined:
+        return "auth_or_session_failed"
+    if "timeout" in combined or "timed out" in combined:
+        return "websocket_timeout"
+    if "failed to connect" in combined:
+        return "websocket_unavailable"
+
+    return "connection_failed"
+
 class ClientConfig(BaseModel):
     """Configuração para inicializar cliente"""
     ssid: str = Field(..., description="SSID no formato: 42[\"auth\",{\"session\":\"...\",\"isDemo\":1,\"uid\":...,\"platform\":1}]")
@@ -253,6 +271,7 @@ class ClientManager:
         """Retorna diagnostico seguro da ultima inicializacao/conexao."""
         config = self.config
         client = self.client
+        last_errors = getattr(client, "_last_connection_errors", []) if client else []
         return {
             "client_initialized": client is not None,
             "connected": self.is_connected,
@@ -260,7 +279,8 @@ class ClientManager:
             "uid": config.uid if config else None,
             "platform": config.platform if config else None,
             "account_type": "demo" if config and config.is_demo else "live" if config else None,
-            "last_connection_errors": getattr(client, "_last_connection_errors", []) if client else [],
+            "failure_type": classify_connection_errors(last_errors),
+            "last_connection_errors": last_errors,
         }
     
     async def connect(self) -> bool:
@@ -385,6 +405,7 @@ async def initialize_client(config: ClientConfig):
                         "Confirme se o SSID nao expirou",
                         "Confirme se o body esta enviando o SSID completo com 42[\"auth\",...]",
                         "Veja diagnostics.demo para confirmar se a API interpretou a conta como demo ou live",
+                        "Veja diagnostics.failure_type para separar bloqueio de rede, timeout ou sessao invalida",
                     ],
                 },
             )

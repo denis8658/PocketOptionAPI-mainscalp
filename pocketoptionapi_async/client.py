@@ -233,7 +233,23 @@ class AsyncPocketOptionClient:
                 # PocketOption demo sessions can be accepted by non-demo regional gateways
                 # when the dedicated demo gateways are unavailable.
                 demo_regions = [name for name in all_regions if "DEMO" in name.upper()]
-                regional_fallback = [name for name in all_regions if "DEMO" not in name.upper()]
+                preferred_fallback = [
+                    "UNITED_STATES",
+                    "RUSSIA",
+                    "EUROPA",
+                    "FRANCE",
+                    "ASIA",
+                    "SEYCHELLES",
+                    "HONGKONG",
+                ]
+                regional_fallback = [
+                    name for name in preferred_fallback if name in all_regions and "DEMO" not in name.upper()
+                ]
+                regional_fallback.extend(
+                    name
+                    for name in all_regions
+                    if "DEMO" not in name.upper() and name not in regional_fallback
+                )
                 regions = demo_regions + regional_fallback
                 logger.info(f"Demo mode: Using demo regions with regional fallback: {regions}")
             else:
