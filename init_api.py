@@ -9,8 +9,16 @@ import json
 import time
 
 # Configuração
+import os
+
 BASE_URL = "https://pocketoptionapi-mainscalp-production-0434.up.railway.app"
-SSID = '42["auth",{"session":"qrhc1u598e6m63htctj148upal","isDemo":1,"uid":9843526,"platform":9,"isFastHistory":true,"isOptimized":true}]'
+
+# SSID diário (todo dia muda). Preferimos POCKET_OPTION_SSID, e fallback para SSID.
+POCKET_OPTION_SSID = os.getenv("POCKET_OPTION_SSID") or os.getenv("SSID")
+
+# is_demo opcional: pode ser setado manualmente (0/1 ou true/false).
+# Se não for setado, o script não envia; o servidor pode usar is_demo padrão.
+POCKET_OPTION_IS_DEMO = os.getenv("POCKET_OPTION_IS_DEMO") or os.getenv("IS_DEMO")
 
 def test_endpoint(name, method, endpoint, data=None, expected_status=200):
     """Testa um endpoint específico"""
@@ -61,11 +69,34 @@ def main():
 
     # 3. Inicializar conexão
     print("\n🔗 Inicializando conexão com PocketOption...")
+
+    if not POCKET_OPTION_SSID:
+        print("\n❌ Variável de ambiente SSID não definida.")
+        print("Defina POCKET_OPTION_SSID (ou SSID) no ambiente/Railway com o SSID COMPLETO:")
+        print('Exemplo: 42["auth",{"session":"...","isDemo":0,"uid":9843526,"platform":9}]')
+        print('Exemplo demo: 42["auth",{"session":"...","isDemo":1,"uid":9843526,"platform":9}]')
+        return
+
+    init_payload: dict = {"ssid": POCKET_OPTION_SSID}
+
+    # Envia is_demo apenas se o usuário setar a env var.
+    # Se não enviar, o backend/cliente vai usar defaults.
+    if POCKET_OPTION_IS_DEMO is not None and str(POCKET_OPTION_IS_DEMO).strip() != "":
+        # Aceita valores: "0"/"1", "true"/"false"
+        v = str(POCKET_OPTION_IS_DEMO).strip().lower()
+        if v in ("1", "true", "yes"):
+            init_payload["is_demo"] = True
+        elif v in ("0", "false", "no"):
+            init_payload["is_demo"] = False
+        else:
+            print(f"\n⚠️ POCKET_OPTION_IS_DEMO inválido: {POCKET_OPTION_IS_DEMO}. Use 0/1 ou true/false.")
+            return
+
     success, response = test_endpoint(
         "Inicialização",
         "POST",
         "/api/init",
-        {"ssid": SSID},
+        init_payload,
         200
     )
 

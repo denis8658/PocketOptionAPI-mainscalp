@@ -125,6 +125,9 @@ class AsyncWebSocketClient:
         self.connection_info: Optional[ConnectionInfo] = None
         self.server_time: Optional[ServerTime] = None
         self._ping_task: Optional[asyncio.Task] = None
+        self._message_receiver_task: Optional[asyncio.Task] = None
+        self._message_receiver_running = False
+        self._receive_lock = asyncio.Lock()
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._event_handlers: Dict[str, List[Callable]] = {}
         self._running = False
@@ -280,6 +283,15 @@ class AsyncWebSocketClient:
             except asyncio.CancelledError:
                 pass
 
+        if self._message_receiver_task and not self._message_receiver_task.done():
+            self._message_receiver_task.cancel()
+            try:
+                await self._message_receiver_task
+            except asyncio.CancelledError:
+                pass
+        self._message_receiver_task = None
+        self._message_receiver_running = False
+
         # Close WebSocket connection
         if self.websocket:
             await self.websocket.close()
@@ -352,13 +364,21 @@ class AsyncWebSocketClient:
         """
         Continuously receive and process messages
         """
+        if self._message_receiver_running:
+            logger.debug("Message receiver already running; skipping duplicate receiver")
+            return
+
+        self._message_receiver_running = True
         try:
             while self._running and self.websocket:
                 try:
-                    message = await asyncio.wait_for(
-                        self.websocket.recv(),
-                        timeout=CONNECTION_SETTINGS["message_timeout"],
-                    )
+                    async with self._receive_lock:
+                        if not self._running or not self.websocket:
+                            break
+                        message = await asyncio.wait_for(
+                            self.websocket.recv(),
+                            timeout=CONNECTION_SETTINGS["message_timeout"],
+                        )
                     await self._process_message(message)
 
                 except asyncio.TimeoutError:
@@ -372,6 +392,8 @@ class AsyncWebSocketClient:
         except Exception as e:
             logger.error(f"Error in message receiving: {e}")
             await self._handle_disconnect()
+        finally:
+            self._message_receiver_running = False
 
     def add_event_handler(self, event: str, handler: Callable) -> None:
         """
@@ -406,7 +428,8 @@ class AsyncWebSocketClient:
             logger.debug("Waiting for initial handshake message...")
             if not self.websocket:
                 raise WebSocketError("WebSocket is not connected during handshake")
-            initial_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
+            async with self._receive_lock:
+                initial_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
             logger.debug(f"Received initial: {initial_message}")
 
             # Ensure initial_message is a string
@@ -422,7 +445,8 @@ class AsyncWebSocketClient:
                 logger.debug("Sent '40' response")
 
                 # Wait for connection establishment message with "40" and "sid"
-                conn_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
+                async with self._receive_lock:
+                    conn_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
                 logger.debug(f"Received connection: {conn_message}")
 
                 # Ensure conn_message is a string
@@ -453,10 +477,12 @@ class AsyncWebSocketClient:
     async def _start_background_tasks(self) -> None:
         """Start background tasks"""
         # Start ping task
-        self._ping_task = asyncio.create_task(self._ping_loop())
+        if not self._ping_task or self._ping_task.done():
+            self._ping_task = asyncio.create_task(self._ping_loop())
 
-        # Start message receiving task (only start it once here)
-        asyncio.create_task(self.receive_messages())
+        # Start message receiving task only once per active websocket.
+        if not self._message_receiver_task or self._message_receiver_task.done():
+            self._message_receiver_task = asyncio.create_task(self.receive_messages())
 
     async def _ping_loop(self) -> None:
         """Send periodic ping messages"""

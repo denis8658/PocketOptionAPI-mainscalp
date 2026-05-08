@@ -10,8 +10,16 @@ import time
 from typing import Dict, Any, Optional
 
 # Configuração
+import os
+
 BASE_URL = "https://pocketoptionapi-mainscalp-production-0434.up.railway.app"
-SSID = '42["auth",{"session":"qrhc1u598e6m63htctj148upal","isDemo":1,"uid":9843526,"platform":9,"isFastHistory":true,"isOptimized":true}]'
+
+# SSID diário (todo dia muda). Preferimos POCKET_OPTION_SSID, e fallback para SSID.
+SSID = os.getenv("POCKET_OPTION_SSID") or os.getenv("SSID")
+
+# is_demo opcional para coerência com o SSID.
+# Pode setar 0/1 ou true/false. Se não setar, o backend usa default.
+IS_DEMO = os.getenv("POCKET_OPTION_IS_DEMO") or os.getenv("IS_DEMO")
 
 # Cores para output
 class Colors:
@@ -87,12 +95,39 @@ def test_server_health():
 def test_connection():
     """Testa conexão com PocketOption"""
     print_header("2. CONEXAO COM POCKETOPTION")
-    
-    # Teste 1: Inicializar
-    print_test("POST /api/init", False, "Aguardando redeploy...")
-    
+
+    if not SSID:
+        print_test("POST /api/init", False, "SSID não definido via POCKET_OPTION_SSID/SSID")
+        return
+
+    # Teste 1: Inicializar (deve usar o SSID do dia)
+    init_payload: Dict[str, Any] = {"ssid": SSID}
+    if IS_DEMO is not None and str(IS_DEMO).strip() != "":
+        v = str(IS_DEMO).strip().lower()
+        if v in ("1", "true", "yes"):
+            init_payload["is_demo"] = True
+        elif v in ("0", "false", "no"):
+            init_payload["is_demo"] = False
+        else:
+            print_test("POST /api/init", False, f"IS_DEMO inválido: {IS_DEMO} (use 0/1 ou true/false)")
+            return
+
+    success, resp = test_endpoint(
+        "POST",
+        "/api/init",
+        json=init_payload
+    )
+    print_test("POST /api/init", success, f"Status {resp.get('status_code', 'N/A')}")
+
+    if not success:
+        return
+
+    # Aguardar um pouco para init/setar cliente
+    time.sleep(1)
+
     # Teste 2: Conectar
-    print_test("POST /api/connect", False, "Requer /api/init primeiro")
+    success, resp = test_endpoint("POST", "/api/connect", json={})
+    print_test("POST /api/connect", success, f"Status {resp.get('status_code', 'N/A')}")
 
 def test_account_endpoints():
     """Testa endpoints de conta"""

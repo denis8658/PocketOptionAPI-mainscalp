@@ -274,6 +274,10 @@ class AsyncPocketOptionClient:
 
             except Exception as e:
                 logger.warning(f"Failed to connect to region {region}: {e}")
+                try:
+                    await self._websocket.disconnect()
+                except Exception as disconnect_error:
+                    logger.debug(f"Error while cleaning failed region connection: {disconnect_error}")
                 continue
 
         return False
