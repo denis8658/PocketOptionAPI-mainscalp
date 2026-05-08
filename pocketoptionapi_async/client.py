@@ -227,18 +227,17 @@ class AsyncPocketOptionClient:
         self._last_connection_errors = []
         # Use appropriate regions based on demo mode
         if not regions:
+            all_regions = REGIONS.get_all_regions()
             if self.is_demo:
-                # For demo mode, only use demo regions
-                demo_urls = REGIONS.get_demo_regions()
-                regions = []
-                all_regions = REGIONS.get_all_regions()
-                for name, url in all_regions.items():
-                    if url in demo_urls:
-                        regions.append(name)
-                logger.info(f"Demo mode: Using demo regions: {regions}")
+                # Try demo endpoints first, then regional endpoints as fallback.
+                # PocketOption demo sessions can be accepted by non-demo regional gateways
+                # when the dedicated demo gateways are unavailable.
+                demo_regions = [name for name in all_regions if "DEMO" in name.upper()]
+                regional_fallback = [name for name in all_regions if "DEMO" not in name.upper()]
+                regions = demo_regions + regional_fallback
+                logger.info(f"Demo mode: Using demo regions with regional fallback: {regions}")
             else:
                 # For live mode, use all regions except demo
-                all_regions = REGIONS.get_all_regions()
                 regions = [name for name, url in all_regions.items() if "DEMO" not in name.upper()]
                 logger.info(f"Live mode: Using non-demo regions: {regions}")
         # Update connection stats
