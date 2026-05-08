@@ -131,6 +131,11 @@ class AsyncWebSocketClient:
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = CONNECTION_SETTINGS["max_reconnect_attempts"]
 
+        # Concurrency guards: ensure only one coroutine calls recv() at a time
+        # and that the message receiver loop is never started more than once.
+        self._receive_lock = asyncio.Lock()
+        self._message_receiver_running = False
+
         # Performance improvements
         self._message_batcher = MessageBatcher()
         self._connection_pool = ConnectionPool()
@@ -350,28 +355,51 @@ class AsyncWebSocketClient:
 
     async def receive_messages(self) -> None:
         """
-        Continuously receive and process messages
+        Continuously receive and process messages.
+
+        Protected by ``_receive_lock`` so that only one coroutine can call
+        ``websocket.recv()`` at a time, eliminating the
+        "cannot call recv while another coroutine is already waiting" error.
+        The ``_message_receiver_running`` flag prevents a second instance of
+        this loop from being spawned while one is already active.
         """
+        if self._message_receiver_running:
+            logger.warning(
+                "receive_messages() called while another receiver is already running — "
+                "ignoring duplicate invocation"
+            )
+            return
+
+        self._message_receiver_running = True
+        logger.debug("Message receiver started")
         try:
             while self._running and self.websocket:
                 try:
-                    message = await asyncio.wait_for(
-                        self.websocket.recv(),
-                        timeout=CONNECTION_SETTINGS["message_timeout"],
-                    )
+                    async with self._receive_lock:
+                        message = await asyncio.wait_for(
+                            self.websocket.recv(),
+                            timeout=CONNECTION_SETTINGS["message_timeout"],
+                        )
                     await self._process_message(message)
 
                 except asyncio.TimeoutError:
                     logger.warning("Message receive timeout")
                     continue
-                except ConnectionClosed:
-                    logger.warning("WebSocket connection closed")
+                except ConnectionClosed as e:
+                    logger.warning(f"WebSocket connection closed: {e}")
+                    await self._handle_disconnect()
+                    break
+                except Exception as e:
+                    logger.error(f"Unexpected error receiving message: {e}")
                     await self._handle_disconnect()
                     break
 
         except Exception as e:
-            logger.error(f"Error in message receiving: {e}")
+            logger.error(f"Fatal error in message receiver: {e}")
             await self._handle_disconnect()
+        finally:
+            self._message_receiver_running = False
+            logger.debug("Message receiver stopped")
 
     def add_event_handler(self, event: str, handler: Callable) -> None:
         """
@@ -400,13 +428,23 @@ class AsyncWebSocketClient:
                 pass
 
     async def _send_handshake(self, ssid: str) -> None:
-        """Send initial handshake messages (following old API pattern exactly)"""
+        """Send initial handshake messages (following old API pattern exactly).
+
+        All ``websocket.recv()`` calls here are wrapped with ``_receive_lock``
+        so they cannot race with the ``receive_messages()`` loop.  The lock is
+        held only for the duration of each individual recv() call, so it is
+        released before any send() or processing work is done.
+        """
         try:
             # Wait for initial connection message with "0" and "sid" (like old API)
             logger.debug("Waiting for initial handshake message...")
             if not self.websocket:
                 raise WebSocketError("WebSocket is not connected during handshake")
-            initial_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
+
+            async with self._receive_lock:
+                initial_message = await asyncio.wait_for(
+                    self.websocket.recv(), timeout=10.0
+                )
             logger.debug(f"Received initial: {initial_message}")
 
             # Ensure initial_message is a string
@@ -422,7 +460,10 @@ class AsyncWebSocketClient:
                 logger.debug("Sent '40' response")
 
                 # Wait for connection establishment message with "40" and "sid"
-                conn_message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
+                async with self._receive_lock:
+                    conn_message = await asyncio.wait_for(
+                        self.websocket.recv(), timeout=10.0
+                    )
                 logger.debug(f"Received connection: {conn_message}")
 
                 # Ensure conn_message is a string
@@ -451,12 +492,22 @@ class AsyncWebSocketClient:
             raise
 
     async def _start_background_tasks(self) -> None:
-        """Start background tasks"""
+        """Start background tasks.
+
+        Guards against starting a second ``receive_messages`` loop if this
+        method is called more than once (e.g. during reconnection flows).
+        """
         # Start ping task
         self._ping_task = asyncio.create_task(self._ping_loop())
 
-        # Start message receiving task (only start it once here)
-        asyncio.create_task(self.receive_messages())
+        # Only start the message receiver if one is not already running.
+        if not self._message_receiver_running:
+            asyncio.create_task(self.receive_messages())
+        else:
+            logger.warning(
+                "_start_background_tasks: message receiver already running, "
+                "skipping duplicate task creation"
+            )
 
     async def _ping_loop(self) -> None:
         """Send periodic ping messages"""
