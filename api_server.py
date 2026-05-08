@@ -10,9 +10,13 @@ from typing import Optional, List, Dict, Any
 import asyncio
 import json
 import time
+import sys
 from datetime import datetime
 import uvicorn
 from loguru import logger
+
+logger.remove()
+logger.add(sys.stdout, level="INFO", enqueue=True)
 
 # Importar cliente PocketOption
 from pocketoptionapi_async import (
@@ -353,12 +357,16 @@ async def initialize_client(config: ClientConfig):
         return {
             "status": "connected",
             "demo": str(client_manager.config.is_demo if client_manager.config else config.is_demo),
+            "uid": str(client_manager.config.uid if client_manager.config else config.uid),
+            "platform": str(client_manager.config.platform if client_manager.config else config.platform),
             "message": "Cliente inicializado e conectado com sucesso"
         }
 
     return {
         "status": "initialized",
         "demo": str(client_manager.config.is_demo if client_manager.config else config.is_demo),
+        "uid": str(client_manager.config.uid if client_manager.config else config.uid),
+        "platform": str(client_manager.config.platform if client_manager.config else config.platform),
         "message": "Cliente inicializado. Agora use POST /api/connect"
     }
 
