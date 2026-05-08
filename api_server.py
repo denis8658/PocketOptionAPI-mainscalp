@@ -73,16 +73,21 @@ def to_unix_timestamp(value: Any) -> int:
 
 def classify_connection_errors(errors: List[Dict[str, str]]) -> str:
     """Classifica falhas de conexao sem expor SSID."""
-    combined = " ".join(error.get("error", "").lower() for error in errors)
+    messages = [error.get("error", "").lower() for error in errors]
+    combined = " ".join(messages)
 
     if not combined:
         return "unknown"
     if "access" in combined or "acesso negado" in combined or "permission" in combined:
         return "network_access_denied"
-    if "authentication" in combined or "auth" in combined or "ssid" in combined:
-        return "auth_or_session_failed"
-    if "timeout" in combined or "timed out" in combined:
+
+    timeout_count = sum("timeout" in message or "timed out" in message for message in messages)
+    auth_count = sum("authentication" in message or "auth" in message or "ssid" in message for message in messages)
+
+    if timeout_count and timeout_count >= auth_count:
         return "websocket_timeout"
+    if auth_count:
+        return "auth_or_session_failed"
     if "failed to connect" in combined:
         return "websocket_unavailable"
 

@@ -81,6 +81,7 @@ class AsyncPocketOptionClient:
 
         # Validate and parse SSID
         self._original_demo = None  # Store original demo value from SSID
+        self._auth_extra_fields: Dict[str, Any] = {}
         self._validate_and_parse_ssid(ssid)
 
         # Core components
@@ -737,17 +738,18 @@ class AsyncPocketOptionClient:
         """Format session authentication message"""
         # Always create auth message from components using constructor parameters
         # This ensures is_demo parameter is respected regardless of SSID format
-        auth_data = {
+        auth_data = dict(self._auth_extra_fields)
+        auth_data.update({
             "session": self.session_id,
             "isDemo": 1 if self.is_demo else 0,
             "uid": self.uid,
             "platform": self.platform,
-        }
+        })
 
         if self.is_fast_history:
             auth_data["isFastHistory"] = True
 
-        return f'42["auth",{json.dumps(auth_data)}]'
+        return f'42["auth",{json.dumps(auth_data, separators=(",", ":"))}]'
 
     def _parse_complete_ssid(self, ssid: str) -> None:
         """Parse complete SSID auth message to extract components"""
@@ -768,6 +770,11 @@ class AsyncPocketOptionClient:
 
                 # Store original demo value from SSID, but don't override the constructor parameter
                 self._original_demo = bool(data.get("isDemo", 1))
+                self._auth_extra_fields = {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"session", "isDemo", "uid", "platform"}
+                }
                 # Keep the is_demo value from constructor - don't override it
                 self.uid = data.get("uid", 0)
                 self.platform = data.get("platform", 1)
