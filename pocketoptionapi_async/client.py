@@ -129,6 +129,7 @@ class AsyncPocketOptionClient:
             "messages_received": 0,
             "connection_start_time": None,
         }
+        self._last_connection_errors: List[Dict[str, str]] = []
 
         logger.info(
             f"Initialized PocketOption client (demo={is_demo}, uid={self.uid}, persistent={persistent_connection}) with enhanced monitoring"
@@ -223,6 +224,7 @@ class AsyncPocketOptionClient:
     async def _start_regular_connection(self, regions: Optional[List[str]] = None) -> bool:
         """Start regular connection (existing behavior)"""
         logger.info("Starting regular connection...")
+        self._last_connection_errors = []
         # Use appropriate regions based on demo mode
         if not regions:
             if self.is_demo:
@@ -274,6 +276,11 @@ class AsyncPocketOptionClient:
 
             except Exception as e:
                 logger.warning(f"Failed to connect to region {region}: {e}")
+                self._last_connection_errors.append({
+                    "region": str(region),
+                    "url": str(REGIONS.get_region(region) or ""),
+                    "error": str(e),
+                })
                 try:
                     await self._websocket.disconnect()
                 except Exception as disconnect_error:

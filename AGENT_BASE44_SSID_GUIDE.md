@@ -81,6 +81,7 @@ Depois de `POST /api/init`, chamar:
 
 ```http
 GET /health
+GET /api/diagnostics
 GET /api/balance
 GET /api/payouts/EURUSD_otc
 ```
@@ -93,6 +94,28 @@ Esperado:
   "client_initialized": true
 }
 ```
+
+Se `/api/init` falhar, chame:
+
+```http
+GET /api/diagnostics
+```
+
+Esse endpoint nao expoe o SSID e mostra:
+
+```json
+{
+  "client_initialized": true,
+  "connected": false,
+  "demo": false,
+  "uid": 9843526,
+  "platform": 9,
+  "account_type": "live",
+  "last_connection_errors": []
+}
+```
+
+Se `demo` aparecer `true` para um SSID real, o SSID foi enviado malformado ou nao contem `"isDemo":0`.
 
 ## Ordens com tempo em segundos
 

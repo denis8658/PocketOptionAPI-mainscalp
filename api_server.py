@@ -16,7 +16,7 @@ import uvicorn
 from loguru import logger
 
 logger.remove()
-logger.add(sys.stdout, level="INFO", enqueue=True)
+logger.add(sys.stdout, level="INFO")
 
 # Importar cliente PocketOption
 from pocketoptionapi_async import (
@@ -106,11 +106,18 @@ class ClientConfig(BaseModel):
         if not ssid:
             raise ValueError("SSID nao pode estar vazio")
 
-        if ssid.startswith('42["auth",'):
-            try:
-                parse_auth_payload(ssid)
-            except Exception as e:
-                raise ValueError(f"SSID invalido: {e}") from e
+        if not ssid.startswith('42["auth",'):
+            raise ValueError('SSID deve ser completo e comecar com 42["auth",')
+
+        try:
+            auth_payload = parse_auth_payload(ssid)
+        except Exception as e:
+            raise ValueError(f"SSID invalido: {e}") from e
+
+        required_fields = ("session", "isDemo", "uid", "platform")
+        missing_fields = [field for field in required_fields if field not in auth_payload]
+        if missing_fields:
+            raise ValueError(f"SSID incompleto. Campos ausentes: {', '.join(missing_fields)}")
 
         return ssid
 
@@ -241,6 +248,20 @@ class ClientManager:
         except Exception as e:
             logger.error(f"Erro ao inicializar cliente: {e}")
             raise HTTPException(status_code=400, detail=f"Erro ao inicializar cliente: {str(e)}")
+
+    def diagnostics(self) -> Dict[str, Any]:
+        """Retorna diagnostico seguro da ultima inicializacao/conexao."""
+        config = self.config
+        client = self.client
+        return {
+            "client_initialized": client is not None,
+            "connected": self.is_connected,
+            "demo": config.is_demo if config else None,
+            "uid": config.uid if config else None,
+            "platform": config.platform if config else None,
+            "account_type": "demo" if config and config.is_demo else "live" if config else None,
+            "last_connection_errors": getattr(client, "_last_connection_errors", []) if client else [],
+        }
     
     async def connect(self) -> bool:
         """Conecta ao servidor PocketOption"""
@@ -251,6 +272,8 @@ class ClientManager:
             self.is_connected = await self.client.connect()
             if self.is_connected:
                 logger.info("Conectado ao PocketOption")
+            else:
+                logger.warning(f"Falha ao conectar ao PocketOption: {self.diagnostics()}")
             return self.is_connected
         except Exception as e:
             logger.error(f"Erro ao conectar: {e}")
@@ -353,7 +376,18 @@ async def initialize_client(config: ClientConfig):
     if config.connect_after_init:
         connected = await client_manager.connect()
         if not connected:
-            raise HTTPException(status_code=500, detail="Cliente inicializado, mas falhou ao conectar")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Cliente inicializado, mas falhou ao conectar ao WebSocket da PocketOption",
+                    "diagnostics": client_manager.diagnostics(),
+                    "next_steps": [
+                        "Confirme se o SSID nao expirou",
+                        "Confirme se o body esta enviando o SSID completo com 42[\"auth\",...]",
+                        "Veja diagnostics.demo para confirmar se a API interpretou a conta como demo ou live",
+                    ],
+                },
+            )
         return {
             "status": "connected",
             "demo": str(client_manager.config.is_demo if client_manager.config else config.is_demo),
@@ -380,7 +414,19 @@ async def connect():
             "status": "connected",
             "message": "Conectado com sucesso ao PocketOption"
         }
-    raise HTTPException(status_code=500, detail="Falha ao conectar")
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": "Falha ao conectar",
+            "diagnostics": client_manager.diagnostics(),
+        },
+    )
+
+
+@app.get("/api/diagnostics", tags=["Connection"], response_model=Dict[str, Any])
+async def diagnostics():
+    """Retorna diagnostico da conexao atual sem expor o SSID."""
+    return client_manager.diagnostics()
 
 
 @app.post("/api/disconnect", tags=["Connection"], response_model=Dict[str, str])
