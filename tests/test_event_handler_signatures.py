@@ -8,6 +8,7 @@ takes 1 positional argument but 2 were given"
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from pocketoptionapi_async.exceptions import AuthenticationError
 
 
 @pytest.fixture
@@ -128,6 +129,25 @@ class TestEventHandlerSignatures:
                 await handler(data)
             else:
                 handler(data)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_authentication_accepts_early_successauth(self, mock_client):
+        """Authentication can arrive before the temporary waiter is registered."""
+        await mock_client._on_authenticated({"status": "success"})
+
+        await mock_client._wait_for_authentication(timeout=0.01)
+
+        assert mock_client._authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_authentication_raises_recorded_auth_error(self, mock_client):
+        """Authentication errors recorded by the permanent handler fail immediately."""
+        await mock_client._on_auth_error({"message": "Invalid or expired SSID"})
+
+        with pytest.raises(AuthenticationError, match="Invalid or expired SSID"):
+            await mock_client._wait_for_authentication(timeout=0.01)
+
+        assert mock_client._authenticated is False
 
 
 class TestEventCallbackPropagation:

@@ -100,6 +100,8 @@ class AsyncPocketOptionClient:
         self._asset_info: Dict[str, Any] = {}  # Store asset information from payout messages
         self._tick_cache: Dict[str, Dict[str, Any]] = {}  # Last known price by asset
         self._last_stream_update: Optional[Dict[str, Any]] = None
+        self._authenticated = False
+        self._last_auth_error: Optional[str] = None
         # Setup event handlers for websocket messages
         self._setup_event_handlers()
 
@@ -177,6 +179,7 @@ class AsyncPocketOptionClient:
     def _setup_event_handlers(self):
         """Setup WebSocket event handlers"""
         self._websocket.add_event_handler("authenticated", self._on_authenticated)
+        self._websocket.add_event_handler("auth_error", self._on_auth_error)
         self._websocket.add_event_handler("balance_updated", self._on_balance_updated)
         self._websocket.add_event_handler(
             "balance_data", self._on_balance_data
@@ -228,42 +231,20 @@ class AsyncPocketOptionClient:
         self._last_connection_errors = []
         # Use appropriate regions based on demo mode
         if not regions:
-            all_regions = REGIONS.get_all_regions()
-            if self.is_demo:
-                # Try demo endpoints first, then regional endpoints as fallback.
-                # PocketOption demo sessions can be accepted by non-demo regional gateways
-                # when the dedicated demo gateways are unavailable.
-                demo_regions = [name for name in all_regions if "DEMO" in name.upper()]
-                preferred_fallback = [
-                    "UNITED_STATES",
-                    "RUSSIA",
-                    "EUROPA",
-                    "FRANCE",
-                    "ASIA",
-                    "SEYCHELLES",
-                    "HONGKONG",
-                ]
-                regional_fallback = [
-                    name for name in preferred_fallback if name in all_regions and "DEMO" not in name.upper()
-                ]
-                regional_fallback.extend(
-                    name
-                    for name in all_regions
-                    if "DEMO" not in name.upper() and name not in regional_fallback
-                )
-                regions = demo_regions + regional_fallback
-                logger.info(f"Demo mode: Using demo regions with regional fallback: {regions}")
-            else:
-                # For live mode, use all regions except demo
-                regions = [name for name, url in all_regions.items() if "DEMO" not in name.upper()]
-                logger.info(f"Live mode: Using non-demo regions: {regions}")
+            regions = self._get_default_regions()
+            mode = "Demo" if self.is_demo else "Live"
+            logger.info(f"{mode} mode: Using regions: {regions}")
         # Update connection stats
         self._connection_stats["total_connections"] += 1
         self._connection_stats["connection_start_time"] = time.time()
 
         for region in regions:
             try:
-                region_url = REGIONS.get_region(region)
+                region_url = (
+                    str(region).strip()
+                    if str(region).startswith("wss://")
+                    else REGIONS.get_region(region)
+                )
                 if not region_url:
                     continue
 
@@ -272,6 +253,8 @@ class AsyncPocketOptionClient:
 
                 # Try to connect
                 ssid_message = self._format_session_message()
+                self._authenticated = False
+                self._last_auth_error = None
                 success = await self._websocket.connect(urls, ssid_message)
 
                 if success:
@@ -294,7 +277,7 @@ class AsyncPocketOptionClient:
                 logger.warning(f"Failed to connect to region {region}: {e}")
                 self._last_connection_errors.append({
                     "region": str(region),
-                    "url": str(REGIONS.get_region(region) or ""),
+                    "url": str(region_url or ""),
                     "error": str(e),
                 })
                 try:
@@ -304,6 +287,38 @@ class AsyncPocketOptionClient:
                 continue
 
         return False
+
+    def _get_default_regions(self) -> List[str]:
+        """Return the default ordered region names for the current account mode."""
+        all_regions = REGIONS.get_all_regions()
+
+        if self.is_demo:
+            # Try demo endpoints first, then regional endpoints as fallback.
+            # PocketOption demo sessions can be accepted by non-demo regional gateways
+            # when the dedicated demo gateways are unavailable.
+            demo_regions = [name for name in all_regions if "DEMO" in name.upper()]
+            preferred_fallback = [
+                "UNITED_STATES",
+                "RUSSIA",
+                "EUROPA",
+                "FRANCE",
+                "ASIA",
+                "SEYCHELLES",
+                "HONGKONG",
+            ]
+            regional_fallback = [
+                name
+                for name in preferred_fallback
+                if name in all_regions and "DEMO" not in name.upper()
+            ]
+            regional_fallback.extend(
+                name
+                for name in all_regions
+                if "DEMO" not in name.upper() and name not in regional_fallback
+            )
+            return demo_regions + regional_fallback
+
+        return [name for name, url in all_regions.items() if "DEMO" not in name.upper()]
 
     async def _start_persistent_connection(self, regions: Optional[List[str]] = None) -> bool:
         """Start persistent connection with keep-alive (like old API)"""
@@ -402,6 +417,8 @@ class AsyncPocketOptionClient:
 
         # Reset state
         self._is_persistent = False
+        self._authenticated = False
+        self._last_auth_error = None
         self._balance = None
         self._orders.clear()
 
@@ -800,8 +817,8 @@ class AsyncPocketOptionClient:
 
     async def _wait_for_authentication(self, timeout: float = 10.0) -> None:
         """Wait for authentication to complete (like old API)"""
-        auth_received = False
-        auth_error = None
+        auth_received = self._authenticated
+        auth_error = self._last_auth_error
 
         def on_auth(data):
             nonlocal auth_received
@@ -818,8 +835,17 @@ class AsyncPocketOptionClient:
         try:
             # Wait for authentication
             start_time = time.time()
-            while not auth_received and not auth_error and (time.time() - start_time) < timeout:
+            while (
+                not auth_received
+                and not auth_error
+                and not self._authenticated
+                and not self._last_auth_error
+                and (time.time() - start_time) < timeout
+            ):
                 await asyncio.sleep(0.1)
+
+            auth_received = auth_received or self._authenticated
+            auth_error = auth_error or self._last_auth_error
 
             if auth_error:
                 raise AuthenticationError(
@@ -1230,10 +1256,21 @@ class AsyncPocketOptionClient:
     # Event handlers
     async def _on_authenticated(self, data: Dict[str, Any]) -> None:
         """Handle authentication success"""
+        self._authenticated = True
+        self._last_auth_error = None
         if self.enable_logging:
             logger.success(" Successfully authenticated with PocketOption")
         self._connection_stats["successful_connections"] += 1
         await self._emit_event("authenticated", data)
+
+    async def _on_auth_error(self, data: Dict[str, Any]) -> None:
+        """Handle authentication failure from WebSocket."""
+        self._authenticated = False
+        if isinstance(data, dict):
+            self._last_auth_error = data.get("message", "Unknown authentication error")
+        else:
+            self._last_auth_error = str(data)
+        await self._emit_event("auth_error", data)
 
     async def _on_balance_updated(self, data: Dict[str, Any]) -> None:
         """Handle balance update"""

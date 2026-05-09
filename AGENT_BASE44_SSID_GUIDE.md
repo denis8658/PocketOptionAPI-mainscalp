@@ -29,6 +29,7 @@ Payload recomendado:
 ```json
 {
   "ssid": "SSID_COMPLETO_COLADO_PELO_USUARIO",
+  "websocket_url": "WEBSOCKET_URL_OPCIONAL_COPIADA_DO_NAVEGADOR",
   "connect_after_init": true
 }
 ```
@@ -38,6 +39,19 @@ Nao envie apenas o `session_id`. O valor precisa comecar com:
 ```text
 42["auth",{
 ```
+
+## WebSocket URL opcional
+
+Se o usuario conseguir copiar a URL WebSocket do navegador, envie tambem em `websocket_url`.
+Esse campo e opcional. Quando informado, a API tenta essa URL primeiro e depois cai para as regioes padrao se ela falhar.
+
+Exemplo de URL valida:
+
+```text
+wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket
+```
+
+Nao invente essa URL. Use apenas se ela vier do DevTools do navegador na conexao atual do usuario.
 
 ## Como montar o JSON no Base44
 
@@ -52,6 +66,7 @@ O Base44 deve enviar como string JSON:
 ```json
 {
   "ssid": "42[\"auth\",{\"session\":\"...\",\"isDemo\":0,\"uid\":9843526,\"platform\":9,\"isFastHistory\":true,\"isOptimized\":true}]",
+  "websocket_url": "wss://api-eu.po.market/socket.io/?EIO=4&transport=websocket",
   "connect_after_init": true
 }
 ```
@@ -62,6 +77,7 @@ Regra pratica para o agente:
 - na chamada HTTP, envie com `JSON.stringify`/cliente JSON normal;
 - nao remova barras `\` dentro de SSID de conta real;
 - nao tente converter manualmente `isDemo`;
+- envie `websocket_url` somente se o usuario fornecer a URL WebSocket atual;
 - nao envie `persistent_connection`.
 - sempre chame `POST /api/init` quando o usuario trocar o SSID.
 

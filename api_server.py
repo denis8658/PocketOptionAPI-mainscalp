@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 import sys
+from urllib.parse import urlparse
 from datetime import datetime
 import uvicorn
 from loguru import logger
@@ -100,6 +101,10 @@ class ClientConfig(BaseModel):
     region: Optional[str] = Field(default=None, description="Região preferida")
     uid: int = Field(default=0, description="User ID")
     platform: int = Field(default=1, description="Platform (1=web, 3=mobile)")
+    websocket_url: Optional[str] = Field(
+        default=None,
+        description="URL WebSocket opcional copiada do navegador para tentar antes das regioes padrao",
+    )
     persistent_connection: bool = Field(default=False, description="Conexão persistente")
     auto_reconnect: bool = Field(default=True, description="Auto-reconexão")
 
@@ -143,6 +148,36 @@ class ClientConfig(BaseModel):
             raise ValueError(f"SSID incompleto. Campos ausentes: {', '.join(missing_fields)}")
 
         return ssid
+
+    @field_validator("websocket_url")
+    @classmethod
+    def normalize_websocket_url(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an optional PocketOption WebSocket URL copied from DevTools."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("websocket_url deve ser uma string")
+
+        websocket_url = "".join(value.splitlines()).strip()
+        if (
+            len(websocket_url) >= 2
+            and websocket_url[0] == websocket_url[-1]
+            and websocket_url[0] in ("'", '"')
+        ):
+            websocket_url = websocket_url[1:-1].strip()
+        if not websocket_url:
+            return None
+
+        parsed = urlparse(websocket_url)
+        hostname = parsed.hostname or ""
+        if parsed.scheme != "wss":
+            raise ValueError("websocket_url deve comecar com wss://")
+        if not (hostname == "po.market" or hostname.endswith(".po.market")):
+            raise ValueError("websocket_url deve apontar para dominio po.market")
+        if "/socket.io/" not in parsed.path:
+            raise ValueError("websocket_url deve ser uma URL socket.io da PocketOption")
+
+        return websocket_url
 
 
 class PlaceOrderRequest(BaseModel):
@@ -284,9 +319,27 @@ class ClientManager:
             "uid": config.uid if config else None,
             "platform": config.platform if config else None,
             "account_type": "demo" if config and config.is_demo else "live" if config else None,
+            "websocket_url_configured": bool(config and config.websocket_url),
             "failure_type": classify_connection_errors(last_errors),
             "last_connection_errors": last_errors,
         }
+
+    def _connection_regions(self) -> Optional[List[str]]:
+        """Build ordered connection targets, prioritizing explicit browser WebSocket URL."""
+        if not self.client or not self.config:
+            return None
+
+        regions: List[str] = []
+        if self.config.websocket_url:
+            regions.append(self.config.websocket_url)
+        if self.config.region:
+            regions.append(self.config.region)
+
+        for region in self.client._get_default_regions():
+            if region not in regions:
+                regions.append(region)
+
+        return regions or None
     
     async def connect(self) -> bool:
         """Conecta ao servidor PocketOption"""
@@ -294,7 +347,7 @@ class ClientManager:
             raise HTTPException(status_code=400, detail="Cliente não inicializado. Use /api/init primeiro")
         
         try:
-            self.is_connected = await self.client.connect()
+            self.is_connected = await self.client.connect(regions=self._connection_regions())
             if self.is_connected:
                 logger.info("Conectado ao PocketOption")
             else:
