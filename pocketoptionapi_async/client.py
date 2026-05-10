@@ -269,7 +269,7 @@ class AsyncPocketOptionClient:
                     logger.info(f" Connected to region: {region}")
 
                     # Wait for authentication
-                    await self._wait_for_authentication()
+                    await self._wait_for_authentication(timeout=20.0)
 
                     # Initialize data
                     await self._initialize_data()
@@ -301,30 +301,7 @@ class AsyncPocketOptionClient:
         all_regions = REGIONS.get_all_regions()
 
         if self.is_demo:
-            # Try demo endpoints first, then regional endpoints as fallback.
-            # PocketOption demo sessions can be accepted by non-demo regional gateways
-            # when the dedicated demo gateways are unavailable.
-            demo_regions = [name for name in all_regions if "DEMO" in name.upper()]
-            preferred_fallback = [
-                "UNITED_STATES",
-                "RUSSIA",
-                "EUROPA",
-                "FRANCE",
-                "ASIA",
-                "SEYCHELLES",
-                "HONGKONG",
-            ]
-            regional_fallback = [
-                name
-                for name in preferred_fallback
-                if name in all_regions and "DEMO" not in name.upper()
-            ]
-            regional_fallback.extend(
-                name
-                for name in all_regions
-                if "DEMO" not in name.upper() and name not in regional_fallback
-            )
-            return demo_regions + regional_fallback
+            return [name for name in all_regions if "DEMO" in name.upper()]
 
         return [name for name, url in all_regions.items() if "DEMO" not in name.upper()]
 

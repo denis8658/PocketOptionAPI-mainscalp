@@ -211,7 +211,7 @@ CONNECTION_SETTINGS = {
     "ping_interval": 20,  # seconds
     "ping_timeout": 10,  # seconds
     "close_timeout": 10,  # seconds
-    "connect_timeout": 4,  # seconds per WebSocket gateway attempt
+    "connect_timeout": 12,  # seconds per WebSocket gateway attempt
     "max_reconnect_attempts": 5,
     "reconnect_delay": 5,  # seconds
     "message_timeout": 30,  # seconds

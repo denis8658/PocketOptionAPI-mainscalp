@@ -343,6 +343,11 @@ class ClientManager:
     async def initialize(self, config: ClientConfig) -> bool:
         """Inicializa o cliente"""
         try:
+            if self.client:
+                await self.disconnect()
+                self.client = None
+                self.config = None
+
             auth_payload = parse_auth_payload(config.ssid)
             is_demo = bool(auth_payload.get("isDemo", 1 if config.is_demo else 0))
             uid = int(auth_payload.get("uid", config.uid))
@@ -410,7 +415,7 @@ class ClientManager:
 
         if self.config.websocket_url:
             add_region(self.config.websocket_url)
-        if self.config.region:
+        if self.config.region and (not self.config.is_demo or "DEMO" in self.config.region.upper()):
             add_region(self.config.region)
 
         for region in self.client._get_default_regions():
