@@ -28,6 +28,7 @@ from pocketoptionapi_async import (
     OrderResult,
     AuthenticationError,
     ConnectionError,
+    REGIONS,
 )
 
 # ==================== MODELS ====================
@@ -72,27 +73,89 @@ def to_unix_timestamp(value: Any) -> int:
     return int(float(value))
 
 
-def classify_connection_errors(errors: List[Dict[str, str]]) -> str:
+def is_demo_websocket_url(url: str) -> bool:
+    """Return whether a PocketOption WebSocket URL is a demo gateway."""
+    hostname = (urlparse(url).hostname or "").lower()
+    return "demo" in hostname
+
+
+def classify_connection_errors(
+    errors: List[Dict[str, str]],
+    is_demo: Optional[bool] = None,
+    primary_url: Optional[str] = None,
+) -> str:
     """Classifica falhas de conexao sem expor SSID."""
     messages = [error.get("error", "").lower() for error in errors]
     combined = " ".join(messages)
 
     if not combined:
         return "unknown"
+    if has_authoritative_auth_rejection(errors, is_demo=is_demo, primary_url=primary_url):
+        return "auth_or_session_failed"
     if "access" in combined or "acesso negado" in combined or "permission" in combined:
         return "network_access_denied"
 
     timeout_count = sum("timeout" in message or "timed out" in message for message in messages)
-    auth_count = sum("authentication" in message or "auth" in message or "ssid" in message for message in messages)
 
-    if timeout_count and timeout_count >= auth_count:
+    if timeout_count:
         return "websocket_timeout"
+    auth_count = sum("authentication" in message or "auth" in message or "ssid" in message for message in messages)
     if auth_count:
         return "auth_or_session_failed"
     if "failed to connect" in combined:
         return "websocket_unavailable"
 
     return "connection_failed"
+
+
+def has_authoritative_auth_rejection(
+    errors: List[Dict[str, str]],
+    is_demo: Optional[bool] = None,
+    primary_url: Optional[str] = None,
+) -> bool:
+    """Detect auth rejection from a gateway that should be trusted for this account."""
+    for error in errors:
+        message = error.get("error", "").lower()
+        if "notauthorized" not in message and "invalid or expired ssid" not in message:
+            continue
+
+        url = error.get("url", "")
+        if primary_url and url == primary_url:
+            return True
+        if is_demo is True and not is_demo_websocket_url(url):
+            continue
+        return True
+
+    return False
+
+
+def connection_next_steps(failure_type: str) -> List[str]:
+    """Return actionable next steps for the current connection failure."""
+    if failure_type == "auth_or_session_failed":
+        return [
+            "Obtenha um SSID novo no navegador. O servidor retornou NotAuthorized ou nao confirmou a autenticacao",
+            "Copie a mensagem completa que comeca com 42[\"auth\",...] no DevTools -> Network -> WS",
+            "Confirme se o body esta enviando o SSID completo, sem remover escapes da session",
+            "Se informar websocket_url, use a URL WebSocket da mesma sessao em que copiou o SSID",
+        ]
+    if failure_type == "websocket_timeout":
+        return [
+            "Tente novamente, pois os gateways WebSocket da PocketOption podem oscilar mesmo com SSID valido",
+            "Se possivel, envie websocket_url copiada da conexao atual do navegador",
+            "Confirme se o servidor onde a API roda permite conexoes wss://*.po.market",
+            "Se NotAuthorized ocorrer na propria websocket_url copiada do navegador, copie SSID e websocket_url novamente da mesma sessao",
+        ]
+    if failure_type == "network_access_denied":
+        return [
+            "Libere conexoes de saida wss://*.po.market no ambiente onde a API esta rodando",
+            "Teste novamente depois de liberar firewall/proxy/sandbox",
+        ]
+    return [
+        "Confirme se o SSID nao expirou",
+        "Confirme se o body esta enviando o SSID completo com 42[\"auth\",...]",
+        "Veja diagnostics.demo para confirmar se a API interpretou a conta como demo ou live",
+        "Veja diagnostics.failure_type para separar bloqueio de rede, timeout ou sessao invalida",
+    ]
 
 class ClientConfig(BaseModel):
     """Configuração para inicializar cliente"""
@@ -312,6 +375,11 @@ class ClientManager:
         config = self.config
         client = self.client
         last_errors = getattr(client, "_last_connection_errors", []) if client else []
+        failure_type = classify_connection_errors(
+            last_errors,
+            is_demo=config.is_demo if config else None,
+            primary_url=config.websocket_url if config else None,
+        )
         return {
             "client_initialized": client is not None,
             "connected": self.is_connected,
@@ -320,7 +388,7 @@ class ClientManager:
             "platform": config.platform if config else None,
             "account_type": "demo" if config and config.is_demo else "live" if config else None,
             "websocket_url_configured": bool(config and config.websocket_url),
-            "failure_type": classify_connection_errors(last_errors),
+            "failure_type": failure_type,
             "last_connection_errors": last_errors,
         }
 
@@ -330,14 +398,23 @@ class ClientManager:
             return None
 
         regions: List[str] = []
+        seen_urls = set()
+
+        def add_region(region: str) -> None:
+            url = region if region.startswith("wss://") else REGIONS.get_region(region)
+            dedupe_key = url or region
+            if dedupe_key in seen_urls:
+                return
+            seen_urls.add(dedupe_key)
+            regions.append(region)
+
         if self.config.websocket_url:
-            regions.append(self.config.websocket_url)
+            add_region(self.config.websocket_url)
         if self.config.region:
-            regions.append(self.config.region)
+            add_region(self.config.region)
 
         for region in self.client._get_default_regions():
-            if region not in regions:
-                regions.append(region)
+            add_region(region)
 
         return regions or None
     
@@ -454,17 +531,13 @@ async def initialize_client(config: ClientConfig):
     if config.connect_after_init:
         connected = await client_manager.connect()
         if not connected:
+            diagnostics = client_manager.diagnostics()
             raise HTTPException(
                 status_code=502,
                 detail={
                     "message": "Cliente inicializado, mas falhou ao conectar ao WebSocket da PocketOption",
-                    "diagnostics": client_manager.diagnostics(),
-                    "next_steps": [
-                        "Confirme se o SSID nao expirou",
-                        "Confirme se o body esta enviando o SSID completo com 42[\"auth\",...]",
-                        "Veja diagnostics.demo para confirmar se a API interpretou a conta como demo ou live",
-                        "Veja diagnostics.failure_type para separar bloqueio de rede, timeout ou sessao invalida",
-                    ],
+                    "diagnostics": diagnostics,
+                    "next_steps": connection_next_steps(diagnostics["failure_type"]),
                 },
             )
         return {
@@ -493,11 +566,13 @@ async def connect():
             "status": "connected",
             "message": "Conectado com sucesso ao PocketOption"
         }
+    diagnostics = client_manager.diagnostics()
     raise HTTPException(
         status_code=502,
         detail={
             "message": "Falha ao conectar",
-            "diagnostics": client_manager.diagnostics(),
+            "diagnostics": diagnostics,
+            "next_steps": connection_next_steps(diagnostics["failure_type"]),
         },
     )
 

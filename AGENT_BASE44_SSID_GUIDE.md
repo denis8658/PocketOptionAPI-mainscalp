@@ -135,6 +135,12 @@ Esse endpoint nao expoe o SSID e mostra:
 
 Se `demo` aparecer `true` para um SSID real, o SSID foi enviado malformado ou nao contem `"isDemo":0`.
 
+Se `failure_type` for `websocket_timeout`, nao conclua automaticamente que o SSID mudou ou expirou.
+O SSID pode continuar igual e valido no navegador; nesse caso, tente novamente e prefira enviar a `websocket_url`
+copiada da mesma conexao WebSocket onde o SSID foi visto.
+
+Se `failure_type` for `auth_or_session_failed`, copie novamente o SSID completo e a `websocket_url` da mesma sessao/aba.
+
 ## Ordens com tempo em segundos
 
 Use `duration_seconds`:
