@@ -80,6 +80,8 @@ Regra pratica para o agente:
 - envie `websocket_url` somente se o usuario fornecer a URL WebSocket atual;
 - nao envie `persistent_connection`.
 - sempre chame `POST /api/init` quando o usuario trocar o SSID.
+- se enviar `connect_after_init: true`, nao chame `POST /api/connect` logo depois.
+  A propria chamada `/api/init` ja conecta e autentica.
 
 ## Conta real
 

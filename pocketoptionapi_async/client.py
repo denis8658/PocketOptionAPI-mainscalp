@@ -121,6 +121,8 @@ class AsyncPocketOptionClient:
         self._ping_task: Optional[asyncio.Task] = None
         self._reconnect_task: Optional[asyncio.Task] = None
         self._is_persistent = False
+        self._connect_lock = asyncio.Lock()
+        self._last_connect_regions: Optional[List[str]] = None
 
         # Connection statistics (like old API)
         self._connection_stats = {
@@ -204,26 +206,32 @@ class AsyncPocketOptionClient:
         Returns:
             bool: True if connected successfully
         """
-        logger.info("Connecting to PocketOption...")
-        # Update persistent setting if provided
-        if persistent is not None:
-            self.persistent_connection = bool(persistent)
+        async with self._connect_lock:
+            if self.is_connected and (self._is_persistent or self._authenticated):
+                logger.info("Already connected to PocketOption")
+                return True
 
-        try:
-            if self.persistent_connection:
-                return await self._start_persistent_connection(regions)
-            else:
-                return await self._start_regular_connection(regions)
+            logger.info("Connecting to PocketOption...")
+            self._last_connect_regions = list(regions) if regions else None
+            # Update persistent setting if provided
+            if persistent is not None:
+                self.persistent_connection = bool(persistent)
 
-        except Exception as e:
-            logger.error(f"Connection failed: {e}")
-            await self._error_monitor.record_error(
-                error_type="connection_failed",
-                severity=ErrorSeverity.HIGH,
-                category=ErrorCategory.CONNECTION,
-                message=f"Connection failed: {e}",
-            )
-            return False
+            try:
+                if self.persistent_connection:
+                    return await self._start_persistent_connection(regions)
+                else:
+                    return await self._start_regular_connection(regions)
+
+            except Exception as e:
+                logger.error(f"Connection failed: {e}")
+                await self._error_monitor.record_error(
+                    error_type="connection_failed",
+                    severity=ErrorSeverity.HIGH,
+                    category=ErrorCategory.CONNECTION,
+                    message=f"Connection failed: {e}",
+                )
+                return False
 
     async def _start_regular_connection(self, regions: Optional[List[str]] = None) -> bool:
         """Start regular connection (existing behavior)"""
@@ -362,10 +370,11 @@ class AsyncPocketOptionClient:
         logger.info("Starting keep-alive tasks for regular connection...")
 
         # Start ping task (like old API)
-        self._ping_task = asyncio.create_task(self._ping_loop())
+        if not self._ping_task or self._ping_task.done():
+            self._ping_task = asyncio.create_task(self._ping_loop())
 
         # Start reconnection monitor if auto_reconnect is enabled
-        if self.auto_reconnect:
+        if self.auto_reconnect and (not self._reconnect_task or self._reconnect_task.done()):
             self._reconnect_task = asyncio.create_task(self._reconnection_monitor())
 
     async def _ping_loop(self):
@@ -389,7 +398,10 @@ class AsyncPocketOptionClient:
                 self._connection_stats["total_reconnects"] += 1
 
                 try:
-                    success = await self._start_regular_connection()
+                    async with self._connect_lock:
+                        if self.is_connected:
+                            continue
+                        success = await self._start_regular_connection(self._last_connect_regions)
                     if success:
                         logger.info(" Reconnection successful")
                     else:
