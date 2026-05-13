@@ -170,7 +170,12 @@ class ClientConfig(BaseModel):
     )
     persistent_connection: bool = Field(default=False, description="Conexão persistente")
     auto_reconnect: bool = Field(default=True, description="Auto-reconexão")
-
+    connection_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=4,
+        description="Quantidade de tentativas quando houver timeout de WebSocket",
+    )
 
     connect_after_init: bool = Field(default=False, description="Conectar automaticamente apos inicializar")
 
@@ -428,16 +433,32 @@ class ClientManager:
         if not self.client:
             raise HTTPException(status_code=400, detail="Cliente não inicializado. Use /api/init primeiro")
         
-        try:
-            self.is_connected = await self.client.connect(regions=self._connection_regions())
-            if self.is_connected:
-                logger.info("Conectado ao PocketOption")
-            else:
-                logger.warning(f"Falha ao conectar ao PocketOption: {self.diagnostics()}")
-            return self.is_connected
-        except Exception as e:
-            logger.error(f"Erro ao conectar: {e}")
-            raise HTTPException(status_code=500, detail=f"Erro ao conectar: {str(e)}")
+        attempts = max(1, min(int(self.config.connection_attempts if self.config else 1), 4))
+        regions = self._connection_regions()
+
+        for attempt in range(1, attempts + 1):
+            try:
+                logger.info(f"Tentativa de conexao {attempt}/{attempts}")
+                self.is_connected = await self.client.connect(regions=regions)
+                if self.is_connected:
+                    logger.info("Conectado ao PocketOption")
+                    return True
+
+                diagnostics = self.diagnostics()
+                logger.warning(f"Falha ao conectar ao PocketOption: {diagnostics}")
+                if diagnostics.get("failure_type") != "websocket_timeout" or attempt >= attempts:
+                    return False
+
+                try:
+                    await self.client.disconnect()
+                except Exception as disconnect_error:
+                    logger.debug(f"Erro limpando tentativa com timeout: {disconnect_error}")
+                await asyncio.sleep(1.5 * attempt)
+            except Exception as e:
+                logger.error(f"Erro ao conectar: {e}")
+                raise HTTPException(status_code=500, detail=f"Erro ao conectar: {str(e)}")
+
+        return False
     
     async def disconnect(self):
         """Desconecta do servidor"""

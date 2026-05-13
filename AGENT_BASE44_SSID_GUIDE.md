@@ -138,6 +138,19 @@ Se `demo` aparecer `true` para um SSID real, o SSID foi enviado malformado ou na
 Se `failure_type` for `websocket_timeout`, nao conclua automaticamente que o SSID mudou ou expirou.
 O SSID pode continuar igual e valido no navegador; nesse caso, tente novamente e prefira enviar a `websocket_url`
 copiada da mesma conexao WebSocket onde o SSID foi visto.
+A API tambem aceita `connection_attempts` opcional em `/api/init` para repetir automaticamente a conexao em caso de timeout.
+Use entre `1` e `4`; recomendado `2` ou `3`.
+
+Exemplo:
+
+```json
+{
+  "ssid": "42[\"auth\",{\"session\":\"...\",\"isDemo\":1,\"uid\":9843526,\"platform\":9}]",
+  "websocket_url": "wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket",
+  "connect_after_init": true,
+  "connection_attempts": 3
+}
+```
 
 Se `failure_type` for `auth_or_session_failed`, copie novamente o SSID completo e a `websocket_url` da mesma sessao/aba.
 
