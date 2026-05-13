@@ -179,7 +179,7 @@ class ClientConfig(BaseModel):
     persistent_connection: bool = Field(default=False, description="Conexão persistente")
     auto_reconnect: bool = Field(default=True, description="Auto-reconexão")
     connection_attempts: int = Field(
-        default=2,
+        default=3,
         ge=1,
         le=4,
         description="Quantidade de tentativas quando houver timeout de WebSocket",

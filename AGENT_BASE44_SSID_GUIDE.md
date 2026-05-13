@@ -139,7 +139,7 @@ Se `failure_type` for `websocket_timeout`, nao conclua automaticamente que o SSI
 O SSID pode continuar igual e valido no navegador; nesse caso, tente novamente e prefira enviar a `websocket_url`
 copiada da mesma conexao WebSocket onde o SSID foi visto.
 A API tambem aceita `connection_attempts` opcional em `/api/init` para repetir automaticamente a conexao em caso de timeout.
-Use entre `1` e `4`; recomendado `2` ou `3`.
+Use entre `1` e `4`; recomendado `3`.
 
 Exemplo:
 
