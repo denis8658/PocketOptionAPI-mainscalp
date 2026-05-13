@@ -33,6 +33,14 @@ from pocketoptionapi_async import (
 
 # ==================== MODELS ====================
 
+DEMO_TIMEOUT_FALLBACK_REGIONS = [
+    "SERVER1",
+    "EUROPA",
+    "UNITED_STATES",
+    "FRANCE",
+    "ASIA",
+]
+
 def parse_auth_payload(ssid: str) -> Dict[str, Any]:
     """Parse the JSON payload from a complete PocketOption auth SSID."""
     ssid = ssid.strip()
@@ -175,6 +183,10 @@ class ClientConfig(BaseModel):
         ge=1,
         le=4,
         description="Quantidade de tentativas quando houver timeout de WebSocket",
+    )
+    demo_timeout_fallback: bool = Field(
+        default=True,
+        description="Tentar gateways gerais quando conta demo falhar por timeout nos gateways demo",
     )
 
     connect_after_init: bool = Field(default=False, description="Conectar automaticamente apos inicializar")
@@ -398,6 +410,8 @@ class ClientManager:
             "platform": config.platform if config else None,
             "account_type": "demo" if config and config.is_demo else "live" if config else None,
             "websocket_url_configured": bool(config and config.websocket_url),
+            "connection_attempts_configured": config.connection_attempts if config else None,
+            "demo_timeout_fallback": config.demo_timeout_fallback if config else None,
             "failure_type": failure_type,
             "last_connection_errors": last_errors,
         }
@@ -427,6 +441,32 @@ class ClientManager:
             add_region(region)
 
         return regions or None
+
+    def _demo_timeout_fallback_regions(self) -> Optional[List[str]]:
+        """Fallback targets for demo sessions when demo gateways only time out."""
+        if not self.client or not self.config or not self.config.is_demo:
+            return None
+        if not self.config.demo_timeout_fallback:
+            return None
+
+        regions: List[str] = []
+        seen_urls = set()
+
+        def add_region(region: str) -> None:
+            url = region if region.startswith("wss://") else REGIONS.get_region(region)
+            if not url or url in seen_urls:
+                return
+            seen_urls.add(url)
+            regions.append(region)
+
+        if self.config.websocket_url:
+            add_region(self.config.websocket_url)
+        for region in self.client._get_default_regions():
+            add_region(region)
+        for region in DEMO_TIMEOUT_FALLBACK_REGIONS:
+            add_region(region)
+
+        return regions or None
     
     async def connect(self) -> bool:
         """Conecta ao servidor PocketOption"""
@@ -446,7 +486,21 @@ class ClientManager:
 
                 diagnostics = self.diagnostics()
                 logger.warning(f"Falha ao conectar ao PocketOption: {diagnostics}")
-                if diagnostics.get("failure_type") != "websocket_timeout" or attempt >= attempts:
+                if diagnostics.get("failure_type") != "websocket_timeout":
+                    return False
+
+                if attempt >= attempts:
+                    fallback_regions = self._demo_timeout_fallback_regions()
+                    if fallback_regions and fallback_regions != regions:
+                        logger.info("Tentando fallback de regioes para conta demo apos timeout")
+                        try:
+                            await self.client.disconnect()
+                        except Exception as disconnect_error:
+                            logger.debug(f"Erro limpando antes do fallback: {disconnect_error}")
+                        self.is_connected = await self.client.connect(regions=fallback_regions)
+                        if self.is_connected:
+                            logger.info("Conectado ao PocketOption usando fallback de regioes")
+                            return True
                     return False
 
                 try:

@@ -148,9 +148,14 @@ Exemplo:
   "ssid": "42[\"auth\",{\"session\":\"...\",\"isDemo\":1,\"uid\":9843526,\"platform\":9}]",
   "websocket_url": "wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket",
   "connect_after_init": true,
-  "connection_attempts": 3
+  "connection_attempts": 3,
+  "demo_timeout_fallback": true
 }
 ```
+
+Para conta demo, `demo_timeout_fallback` pode ficar `true`. Se os gateways `DEMO` e `DEMO_2`
+derem timeout, a API tenta alguns gateways gerais como contingencia. Isso nao muda o SSID nem
+troca a conta; apenas amplia os endpoints tentados quando a falha for timeout.
 
 Se `failure_type` for `auth_or_session_failed`, copie novamente o SSID completo e a `websocket_url` da mesma sessao/aba.
 
