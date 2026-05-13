@@ -143,8 +143,6 @@ async def main():
     # client = PocketOptionAPIClient(base_url="https://pocketoptionapi-mainscalp.railway.internal")  # Produção
     
     try:
-    
-    try:
         # 1. Verificar saúde do servidor
         print("🔍 Verificando saúde do servidor...")
         health = await client.health_check()

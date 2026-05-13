@@ -3,10 +3,10 @@
 # ==================== URLs Base ====================
 
 # Desenvolvimento (local)
-BASE_URL_DEV=http://localhost:8000
+BASE_URL_DEV = "http://localhost:8000"
 
 # Produção (Railway)
-BASE_URL_PROD=https://pocketoptionapi-mainscalp.railway.internal
+BASE_URL_PROD = "https://pocketoptionapi-mainscalp.railway.internal"
 
 # ==================== Como Usar ====================
 
