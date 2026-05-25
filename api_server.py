@@ -3,12 +3,13 @@ FastAPI Server - PocketOption API Endpoints
 Expõe a API PocketOption como endpoints REST para consumo externo
 """
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 import asyncio
 import json
+import os
 import time
 import sys
 from urllib.parse import urlparse
@@ -164,6 +165,55 @@ def connection_next_steps(failure_type: str) -> List[str]:
         "Veja diagnostics.demo para confirmar se a API interpretou a conta como demo ou live",
         "Veja diagnostics.failure_type para separar bloqueio de rede, timeout ou sessao invalida",
     ]
+
+
+def build_pair_payout_list(
+    asset_full: Dict[str, Any],
+    include_otc: bool = True,
+    only_tradable: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return forex/currency pairs with payout in a frontend-friendly list."""
+    assets = asset_full.get("assets", {}) or {}
+    payouts = asset_full.get("payouts", {}) or {}
+    pairs: List[Dict[str, Any]] = []
+
+    for symbol, info in assets.items():
+        asset_type = str(info.get("type", "")).lower()
+        is_currency_pair = asset_type in {"currency", "forex"}
+        if not is_currency_pair:
+            continue
+
+        is_otc = bool(info.get("is_otc", symbol.endswith("_otc")))
+        if is_otc and not include_otc:
+            continue
+
+        tradable = bool(info.get("tradable", False))
+        if only_tradable and not tradable:
+            continue
+
+        payout = payouts.get(symbol, info.get("payout"))
+        pairs.append(
+            {
+                "symbol": symbol,
+                "name": info.get("name", symbol),
+                "type": info.get("type"),
+                "payout": payout,
+                "payout_percent": float(payout) if payout is not None else None,
+                "is_otc": is_otc,
+                "tradable": tradable,
+                "expirations": info.get("expirations", []),
+            }
+        )
+
+    return sorted(
+        pairs,
+        key=lambda item: (
+            item["payout_percent"] is not None,
+            item["payout_percent"] or -1,
+            item["symbol"],
+        ),
+        reverse=True,
+    )
 
 class ClientConfig(BaseModel):
     """Configuração para inicializar cliente"""
@@ -356,6 +406,7 @@ class ClientManager:
         self.client: Optional[AsyncPocketOptionClient] = None
         self.is_connected = False
         self.config: Optional[ClientConfig] = None
+        self._connect_lock = asyncio.Lock()
     
     async def initialize(self, config: ClientConfig) -> bool:
         """Inicializa o cliente"""
@@ -391,6 +442,28 @@ class ClientManager:
         except Exception as e:
             logger.error(f"Erro ao inicializar cliente: {e}")
             raise HTTPException(status_code=400, detail=f"Erro ao inicializar cliente: {str(e)}")
+
+    def _config_from_environment(self) -> Optional[ClientConfig]:
+        """Build client config from environment variables, if an SSID is configured."""
+        ssid = os.getenv("POCKET_OPTION_SSID") or os.getenv("SSID")
+        if not ssid:
+            return None
+
+        payload: Dict[str, Any] = {
+            "ssid": ssid,
+            "websocket_url": os.getenv("POCKET_OPTION_WEBSOCKET_URL") or os.getenv("WEBSOCKET_URL"),
+            "region": os.getenv("POCKET_OPTION_REGION") or os.getenv("REGION"),
+        }
+
+        is_demo = os.getenv("POCKET_OPTION_IS_DEMO") or os.getenv("IS_DEMO")
+        if is_demo is not None and is_demo.strip() != "":
+            payload["is_demo"] = is_demo.strip().lower() in ("1", "true", "yes", "sim")
+
+        attempts = os.getenv("POCKET_OPTION_CONNECTION_ATTEMPTS")
+        if attempts:
+            payload["connection_attempts"] = attempts
+
+        return ClientConfig(**payload)
 
     def diagnostics(self) -> Dict[str, Any]:
         """Retorna diagnostico seguro da ultima inicializacao/conexao."""
@@ -513,6 +586,43 @@ class ClientManager:
                 raise HTTPException(status_code=500, detail=f"Erro ao conectar: {str(e)}")
 
         return False
+
+    async def ensure_connected(self) -> AsyncPocketOptionClient:
+        """Return a connected client, initializing/reconnecting when possible."""
+        async with self._connect_lock:
+            if not self.client:
+                env_config = self._config_from_environment()
+                if not env_config:
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "message": "Cliente nao inicializado. Use /api/init ou configure POCKET_OPTION_SSID/SSID no ambiente",
+                            "next_steps": [
+                                "Chame POST /api/init com connect_after_init=true antes de pedir candles",
+                                "Ou configure POCKET_OPTION_SSID/SSID no ambiente para conexao automatica",
+                            ],
+                        },
+                    )
+                await self.initialize(env_config)
+
+            if self.client and self.client.is_connected:
+                self.is_connected = True
+                return self.client
+
+            self.is_connected = False
+            connected = await self.connect()
+            if connected and self.client:
+                return self.client
+
+            diagnostics = self.diagnostics()
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Nao foi possivel conectar ao PocketOption antes de executar a chamada",
+                    "diagnostics": diagnostics,
+                    "next_steps": connection_next_steps(diagnostics["failure_type"]),
+                },
+            )
     
     async def disconnect(self):
         """Desconecta do servidor"""
@@ -560,7 +670,7 @@ client_manager = ClientManager()
 
 async def get_client() -> AsyncPocketOptionClient:
     """Dependência para obter cliente conectado"""
-    return client_manager.get_client()
+    return await client_manager.ensure_connected()
 
 
 # ==================== ENDPOINTS ====================
@@ -881,6 +991,28 @@ async def get_payouts(client: AsyncPocketOptionClient = Depends(get_client)):
         "payouts": payouts,
         "asset_info": asset_full.get("assets", {}),
         "count": len(payouts),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/pairs/payouts", tags=["Market Data"], response_model=Dict[str, Any])
+async def get_pairs_with_payouts(
+    include_otc: bool = Query(default=True, description="Incluir pares OTC"),
+    only_tradable: bool = Query(default=True, description="Listar apenas pares negociaveis"),
+    client: AsyncPocketOptionClient = Depends(get_client),
+):
+    """Lista pares de moedas com payout em formato pronto para consumo."""
+    asset_full = client._get_asset_full()
+    pairs = build_pair_payout_list(
+        asset_full,
+        include_otc=include_otc,
+        only_tradable=only_tradable,
+    )
+    return {
+        "pairs": pairs,
+        "count": len(pairs),
+        "include_otc": include_otc,
+        "only_tradable": only_tradable,
         "timestamp": datetime.now().isoformat(),
     }
 

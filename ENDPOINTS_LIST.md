@@ -546,6 +546,16 @@ Busca payout de um ativo:
 curl -X GET "http://localhost:8000/api/payouts/EURUSD_otc"
 ```
 
+### GET `/api/pairs/payouts`
+
+Lista pares de moedas com payout em formato de lista, ordenado pelos maiores payouts:
+
+```bash
+curl -X GET "http://localhost:8000/api/pairs/payouts"
+curl -X GET "http://localhost:8000/api/pairs/payouts?include_otc=false"
+curl -X GET "http://localhost:8000/api/pairs/payouts?only_tradable=false"
+```
+
 ### GET `/api/assets`
 
 Tambem retorna `payouts` e `asset_info` quando esses dados ja foram recebidos pelo WebSocket.
