@@ -178,8 +178,8 @@ class Order(BaseModel):
         Validator to ensure the order duration meets a minimum requirement.
         This prevents orders with impractically short durations.
         """
-        if v < 5:  # minimum 5 seconds
-            raise ValueError("Duration must be at least 5 seconds")
+        if v < 60:  # minimum 60 seconds
+            raise ValueError("Duration must be at least 60 seconds")
         return v
 
 

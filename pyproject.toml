@@ -67,11 +67,11 @@ testpaths = [
     "tests",
 ]
 markers = [
+    "asyncio: marks tests that run in an asyncio event loop",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
 ]
-asyncio_mode = "auto"
 filterwarnings = [
     "error",
     "ignore::UserWarning",
