@@ -353,7 +353,7 @@ curl -X POST "http://localhost:8000/api/candles" \
 |-------|------|-------------|---------|-----------|
 | `asset` | string | ✅ | - | Símbolo do ativo |
 | `timeframe` | integer | ✅ | - | Timeframe em minutos |
-| `count` | integer | ❌ | 100 | Quantidade de candles |
+| `count` | integer | ❌ | 100 | Quantidade de candles (1 a 1000) |
 
 **Response (200):**
 ```json

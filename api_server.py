@@ -340,7 +340,7 @@ class GetCandlesRequest(BaseModel):
     """Request para obter candles"""
     asset: str = Field(..., description="Símbolo do ativo")
     timeframe: int = Field(..., description="Timeframe em minutos")
-    count: int = Field(default=100, description="Quantidade de candles")
+    count: int = Field(default=100, ge=1, le=1000, description="Quantidade de candles (maximo 1000)")
 
 
 class BalanceResponse(BaseModel):
