@@ -5,7 +5,7 @@ Expõe a API PocketOption como endpoints REST para consumo externo
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Dict, Any
 import asyncio
 import json
@@ -312,29 +312,13 @@ class ClientConfig(BaseModel):
 
 class PlaceOrderRequest(BaseModel):
     """Request para colocar uma ordem"""
+    model_config = ConfigDict(extra="forbid")
+
     asset: str = Field(..., description="Símbolo do ativo (ex: EURUSD)")
     direction: str = Field(..., description="Direção: CALL ou PUT")
     amount: float = Field(..., description="Valor da aposta")
-    timeframe: Optional[int] = Field(default=None, description="Tempo em minutos (compatibilidade)")
-    duration_seconds: Optional[int] = Field(default=None, description="Tempo de expiracao em segundos")
+    duration_seconds: int = Field(..., ge=5, description="Tempo de expiracao em segundos")
     leverage: Optional[int] = Field(default=1, description="Alavancagem")
-
-    @model_validator(mode="after")
-    def validate_duration(self):
-        if self.duration_seconds is None and self.timeframe is None:
-            raise ValueError("Informe duration_seconds ou timeframe")
-
-        if self.duration_seconds is not None and self.duration_seconds < 5:
-            raise ValueError("duration_seconds deve ser no minimo 5")
-
-        return self
-
-    @property
-    def duration(self) -> int:
-        if self.duration_seconds is not None:
-            return self.duration_seconds
-        return int(self.timeframe or 0) * 60
-
 
 class GetCandlesRequest(BaseModel):
     """Request para obter candles"""
@@ -358,7 +342,6 @@ class OrderResponse(BaseModel):
     amount: float
     asset: str
     direction: str
-    timeframe: Optional[int] = None
     duration_seconds: int
     payout: Optional[float] = None
     expires_at: Optional[str] = None
@@ -829,7 +812,7 @@ async def place_order(
         "asset": "EURUSD",
         "direction": "CALL",
         "amount": 10,
-        "timeframe": 5
+        "duration_seconds": 60
     }
     ```
     """
@@ -838,12 +821,11 @@ async def place_order(
         direction = OrderDirection.CALL if request.direction.upper() == "CALL" else OrderDirection.PUT
         
         # Colocar ordem
-        duration_seconds = request.duration
         order_result = await client.place_order(
             asset=request.asset,
             direction=direction,
             amount=request.amount,
-            duration=duration_seconds,
+            duration=request.duration_seconds,
         )
         
         return OrderResponse(
@@ -852,7 +834,6 @@ async def place_order(
             amount=order_result.amount,
             asset=order_result.asset,
             direction=order_result.direction.value if hasattr(order_result.direction, 'value') else str(order_result.direction),
-            timeframe=int(order_result.duration / 60),
             duration_seconds=order_result.duration,
             payout=order_result.payout,
             expires_at=order_result.expires_at.isoformat(),
@@ -875,7 +856,6 @@ async def get_active_orders(client: AsyncPocketOptionClient = Depends(get_client
                 amount=order.amount,
                 asset=order.asset,
                 direction=order.direction.value if hasattr(order.direction, 'value') else str(order.direction),
-                timeframe=int(order.duration / 60),
                 duration_seconds=order.duration,
                 payout=order.payout,
                 expires_at=order.expires_at.isoformat(),

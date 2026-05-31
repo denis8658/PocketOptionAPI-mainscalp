@@ -83,14 +83,14 @@ class PocketOptionAPIClient:
         asset: str,
         direction: str,
         amount: float,
-        timeframe: int
+        duration_seconds: int
     ) -> Dict[str, Any]:
         """Coloca uma ordem"""
         payload = {
             "asset": asset,
             "direction": direction,
             "amount": amount,
-            "timeframe": timeframe
+            "duration_seconds": duration_seconds
         }
         response = await self.client.post("/api/order/place", json=payload)
         response.raise_for_status()
@@ -195,7 +195,7 @@ async def main():
         #     asset="EURUSD",
         #     direction="CALL",
         #     amount=1.0,
-        #     timeframe=5
+        #     duration_seconds=60
         # )
         # print(f"   Status: {order['status']}")
         # print(f"   Request ID: {order['request_id']}")
@@ -261,7 +261,7 @@ curl -X POST "http://localhost:8000/api/order/place" \\
     "asset": "EURUSD",
     "direction": "CALL",
     "amount": 10,
-    "timeframe": 5
+    "duration_seconds": 60
   }'
     """,
     

@@ -137,7 +137,7 @@ Use `duration_seconds` para enviar o tempo exato de expiracao:
 }
 ```
 
-`timeframe` em minutos continua aceito por compatibilidade.
+Para ordens, envie somente `duration_seconds`; `timeframe` fica reservado para candles.
 
 ### Payouts
 
@@ -222,7 +222,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
     "asset": "EURUSD",
     "direction": "CALL",
     "amount": 10,
-    "timeframe": 5
+    "duration_seconds": 60
   }'
 ```
 
@@ -234,7 +234,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
   "amount": 10,
   "asset": "EURUSD",
   "direction": "CALL",
-  "timeframe": 5,
+  "duration_seconds": 60,
   "message": null
 }
 ```
@@ -424,7 +424,7 @@ response = requests.post("http://localhost:8000/api/order/place", json={
     "asset": "EURUSD",
     "direction": "CALL",
     "amount": 10,
-    "timeframe": 5
+    "duration_seconds": 60
 })
 print(response.json())
 
@@ -535,7 +535,7 @@ client = PocketOptionAPIClient(base_url="http://localhost:8000")
 await client.init_client(ssid="...")
 await client.connect()
 balance = await client.get_balance()
-await client.place_order(asset="EURUSD", direction="CALL", amount=10, timeframe=5)
+await client.place_order(asset="EURUSD", direction="CALL", amount=10, duration_seconds=60)
 candles = await client.get_candles(asset="EURUSD", timeframe=5, count=50)
 ```
 

@@ -150,7 +150,7 @@ def test_order_endpoints():
         "asset": "EURUSD",
         "direction": "CALL",
         "amount": 10,
-        "timeframe": 5
+        "duration_seconds": 5
     })
     print_test("POST /api/order/place", success, f"Status {resp.get('status_code', 'N/A')}")
     

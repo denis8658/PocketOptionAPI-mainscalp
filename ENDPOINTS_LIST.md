@@ -241,7 +241,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
     "asset": "EURUSD",
     "direction": "CALL",
     "amount": 10.0,
-    "timeframe": 5
+    "duration_seconds": 60
   }'
 ```
 
@@ -251,7 +251,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
 | `asset` | string | ✅ | Símbolo do ativo (ex: EURUSD) |
 | `direction` | string | ✅ | CALL ou PUT |
 | `amount` | float | ✅ | Valor da aposta em USD |
-| `timeframe` | integer | ✅ | Tempo em minutos (1, 5, 15, 30, 60) |
+| `duration_seconds` | integer | ✅ | Tempo de expiracao em segundos (minimo 5) |
 
 **Response (200):**
 ```json
@@ -261,7 +261,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
   "amount": 10.0,
   "asset": "EURUSD",
   "direction": "CALL",
-  "timeframe": 5,
+  "duration_seconds": 60,
   "message": null
 }
 ```
@@ -274,12 +274,12 @@ curl -X POST "http://localhost:8000/api/order/place" \
 | `amount` | float | Valor apostado |
 | `asset` | string | Ativo negociado |
 | `direction` | string | Direção da ordem |
-| `timeframe` | integer | Timeframe da ordem |
+| `duration_seconds` | integer | Expiracao da ordem em segundos |
 | `message` | string | Mensagem adicional/erro |
 
 **Valores Válidos:**
 - **direction**: `CALL`, `PUT`
-- **timeframe**: `1`, `5`, `15`, `30`, `60`
+- **duration_seconds**: minimo `5`; valores validos dependem do ativo
 - **amount**: > 0 (mínimo depende da plataforma)
 
 **Errors:**
@@ -307,7 +307,7 @@ curl -X GET "http://localhost:8000/api/orders/active"
     "amount": 10.0,
     "asset": "EURUSD",
     "direction": "CALL",
-    "timeframe": 5,
+    "duration_seconds": 60,
     "message": null
   },
   {
@@ -316,7 +316,7 @@ curl -X GET "http://localhost:8000/api/orders/active"
     "amount": 5.0,
     "asset": "GBPUSD",
     "direction": "PUT",
-    "timeframe": 15,
+    "duration_seconds": 120,
     "message": null
   }
 ]
@@ -517,18 +517,18 @@ Formato recomendado para entradas em segundos:
 
 `duration_seconds` e o tempo exato de expiracao em segundos. Minimo aceito pelo cliente interno: `5`.
 
-O formato antigo continua funcionando:
+O formato antigo com `timeframe` nao e mais aceito para ordens.
 
 ```json
 {
   "asset": "EURUSD_otc",
   "direction": "PUT",
   "amount": 1,
-  "timeframe": 1
+  "duration_seconds": 60
 }
 ```
 
-Nesse caso, `timeframe: 1` vira `60` segundos.
+Envie sempre `duration_seconds` com o tempo final em segundos.
 
 ### GET `/api/payouts`
 
