@@ -227,6 +227,8 @@ API_LIMITS = {
     "rate_limit": 100,  # requests per minute
 }
 
+STANDARD_ORDER_DURATIONS = {60, 120, 180, 300, 600, 900, 1800}
+
 # Default headers
 DEFAULT_HEADERS = {
     "Origin": "https://pocketoption.com",

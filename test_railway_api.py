@@ -147,10 +147,10 @@ def test_order_endpoints():
     
     # Teste 1: Place Order
     success, resp = test_endpoint("POST", "/api/order/place", json={
-        "asset": "EURUSD",
+        "asset": "USDJPY_otc",
         "direction": "CALL",
         "amount": 10,
-        "duration_seconds": 5
+        "duration_seconds": 3
     })
     print_test("POST /api/order/place", success, f"Status {resp.get('status_code', 'N/A')}")
     

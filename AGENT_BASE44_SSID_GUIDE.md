@@ -165,14 +165,14 @@ Use `duration_seconds`:
 
 ```json
 {
-  "asset": "EURUSD_otc",
+  "asset": "USDJPY_otc",
   "direction": "CALL",
   "amount": 1,
-  "duration_seconds": 60
+  "duration_seconds": 3
 }
 ```
 
-Valores aceitos dependem do ativo. Consulte:
+Valores aceitos dependem do ativo. OTC pode aceitar expiracoes abaixo de 60 segundos. Para ativos nao-OTC, use `60`, `120`, `180`, `300`, `600`, `900` ou `1800`. Consulte:
 
 ```http
 GET /api/payouts/EURUSD_otc

@@ -130,14 +130,14 @@ Use `duration_seconds` para enviar o tempo exato de expiracao:
 
 ```json
 {
-  "asset": "EURUSD_otc",
+  "asset": "USDJPY_otc",
   "direction": "CALL",
   "amount": 1,
-  "duration_seconds": 30
+  "duration_seconds": 3
 }
 ```
 
-Para ordens, envie somente `duration_seconds`; `timeframe` fica reservado para candles.
+Para ordens, envie somente `duration_seconds`; `timeframe` fica reservado para candles. Ativos OTC podem aceitar expiracoes abaixo de 60 segundos. Para ativos nao-OTC, use `60`, `120`, `180`, `300`, `600`, `900` ou `1800`.
 
 ### Payouts
 

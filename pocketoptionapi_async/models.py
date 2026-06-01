@@ -173,13 +173,16 @@ class Order(BaseModel):
         return v
 
     @validator("duration")
-    def duration_must_be_valid(cls, v):
+    def duration_must_be_valid(cls, v, values):
         """
-        Validator to ensure the order duration meets a minimum requirement.
-        This prevents orders with impractically short durations.
+        Validator to ensure the order duration is positive.
+        OTC assets can accept sub-minute expirations; non-OTC limits are enforced
+        by the client validator where the asset is available.
         """
-        if v < 60:  # minimum 60 seconds
-            raise ValueError("Duration must be at least 60 seconds")
+        asset = str(values.get("asset", ""))
+        min_duration = 1 if asset.endswith("_otc") else 60
+        if v < min_duration:
+            raise ValueError(f"Duration must be at least {min_duration} seconds")
         return v
 
 

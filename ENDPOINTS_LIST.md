@@ -251,7 +251,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
 | `asset` | string | ✅ | Símbolo do ativo (ex: EURUSD) |
 | `direction` | string | ✅ | CALL ou PUT |
 | `amount` | float | ✅ | Valor da aposta em USD |
-| `duration_seconds` | integer | ✅ | Tempo de expiracao em segundos (minimo 5) |
+| `duration_seconds` | integer | ✅ | Tempo de expiracao em segundos |
 
 **Response (200):**
 ```json
@@ -279,7 +279,7 @@ curl -X POST "http://localhost:8000/api/order/place" \
 
 **Valores Válidos:**
 - **direction**: `CALL`, `PUT`
-- **duration_seconds**: minimo `5`; valores validos dependem do ativo
+- **duration_seconds**: para ativos nao-OTC use `60`, `120`, `180`, `300`, `600`, `900` ou `1800`; OTC pode aceitar expiracoes abaixo de 60 segundos
 - **amount**: > 0 (mínimo depende da plataforma)
 
 **Errors:**
@@ -506,16 +506,16 @@ Formato recomendado para entradas em segundos:
 
 ```json
 {
-  "asset": "EURUSD_otc",
+  "asset": "USDJPY_otc",
   "direction": "CALL",
   "amount": 1,
-  "duration_seconds": 30
+  "duration_seconds": 3
 }
 ```
 
 `direction` aceita `CALL` para compra e `PUT` para venda.
 
-`duration_seconds` e o tempo exato de expiracao em segundos. Minimo aceito pelo cliente interno: `5`.
+`duration_seconds` e o tempo exato de expiracao em segundos. Ativos OTC podem aceitar expiracoes abaixo de 60 segundos. Para ativos nao-OTC, use somente `60`, `120`, `180`, `300`, `600`, `900` ou `1800`.
 
 O formato antigo com `timeframe` nao e mais aceito para ordens.
 

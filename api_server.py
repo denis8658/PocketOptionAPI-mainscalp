@@ -317,7 +317,7 @@ class PlaceOrderRequest(BaseModel):
     asset: str = Field(..., description="Símbolo do ativo (ex: EURUSD)")
     direction: str = Field(..., description="Direção: CALL ou PUT")
     amount: float = Field(..., description="Valor da aposta")
-    duration_seconds: int = Field(..., ge=5, description="Tempo de expiracao em segundos")
+    duration_seconds: int = Field(..., ge=1, description="Tempo de expiracao em segundos")
     leverage: Optional[int] = Field(default=1, description="Alavancagem")
 
 class GetCandlesRequest(BaseModel):
@@ -809,10 +809,10 @@ async def place_order(
     Exemplo:
     ```json
     {
-        "asset": "EURUSD",
+        "asset": "USDJPY_otc",
         "direction": "CALL",
         "amount": 10,
-        "duration_seconds": 60
+        "duration_seconds": 3
     }
     ```
     """

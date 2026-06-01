@@ -105,6 +105,18 @@ class TestAsyncPocketOptionClient:
             asset="EURUSD_otc", amount=10.0, direction=OrderDirection.CALL, duration=120
         )
 
+    def test_validate_order_parameters_valid_standard_asset_duration(self, client):
+        """Test standard asset order validation with allowed duration"""
+        client._validate_order_parameters(
+            asset="EURUSD", amount=10.0, direction=OrderDirection.CALL, duration=120
+        )
+
+    def test_validate_order_parameters_valid_short_otc_duration(self, client):
+        """Test OTC order validation with sub-minute duration"""
+        client._validate_order_parameters(
+            asset="EURUSD_otc", amount=10.0, direction=OrderDirection.CALL, duration=3
+        )
+
     def test_validate_order_parameters_invalid_asset(self, client):
         """Test order parameter validation with invalid asset"""
         with pytest.raises(InvalidParameterError):
@@ -129,10 +141,20 @@ class TestAsyncPocketOptionClient:
         """Test order parameter validation with invalid duration"""
         with pytest.raises(InvalidParameterError):
             client._validate_order_parameters(
-                asset="EURUSD_otc",
+                asset="EURUSD",
                 amount=10.0,
                 direction=OrderDirection.CALL,
-                duration=30,  # Too short
+                duration=30,  # Too short for non-OTC assets
+            )
+
+    def test_validate_order_parameters_invalid_standard_asset_duration(self, client):
+        """Test standard asset order validation rejects unsupported duration"""
+        with pytest.raises(InvalidParameterError):
+            client._validate_order_parameters(
+                asset="EURUSD",
+                amount=10.0,
+                direction=OrderDirection.CALL,
+                duration=240,
             )
 
     @pytest.mark.asyncio

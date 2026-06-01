@@ -23,7 +23,7 @@ from .models import (
     OrderDirection,
     ServerTime,
 )
-from .constants import ASSETS, REGIONS, TIMEFRAMES, API_LIMITS
+from .constants import ASSETS, REGIONS, TIMEFRAMES, API_LIMITS, STANDARD_ORDER_DURATIONS
 from .exceptions import (
     PocketOptionError,
     ConnectionError,
@@ -893,9 +893,16 @@ class AsyncPocketOptionClient:
                 f"Amount must be between {API_LIMITS['min_order_amount']} and {API_LIMITS['max_order_amount']}"
             )
 
-        if duration < API_LIMITS["min_duration"] or duration > API_LIMITS["max_duration"]:
+        if not asset.endswith("_otc") and duration not in STANDARD_ORDER_DURATIONS:
             raise InvalidParameterError(
-                f"Duration must be between {API_LIMITS['min_duration']} and {API_LIMITS['max_duration']} seconds"
+                "Duration for non-OTC assets must be one of: "
+                f"{', '.join(str(value) for value in sorted(STANDARD_ORDER_DURATIONS))} seconds"
+            )
+
+        min_duration = 1 if asset.endswith("_otc") else API_LIMITS["min_duration"]
+        if duration < min_duration or duration > API_LIMITS["max_duration"]:
+            raise InvalidParameterError(
+                f"Duration must be between {min_duration} and {API_LIMITS['max_duration']} seconds"
             )
 
     async def _send_order(self, order: Order) -> None:
