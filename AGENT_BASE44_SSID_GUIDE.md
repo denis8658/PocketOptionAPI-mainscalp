@@ -202,3 +202,42 @@ Resposta:
   "balance_after": 2271.03
 }
 ```
+
+## Preco atual / ticks
+
+Para obter o preco atual de um ativo, primeiro ative o stream desse ativo com candles:
+
+```http
+POST /api/candles
+```
+
+Body:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "timeframe": 60,
+  "count": 5
+}
+```
+
+Depois consulte:
+
+```http
+GET /api/ticks/EURUSD_otc
+```
+
+Resposta esperada:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "price": 1.13602,
+  "timestamp": 1781415544,
+  "source": "stream",
+  "received_at": "2026-06-14T00:39:04.685710",
+  "age_seconds": 0
+}
+```
+
+O WebSocket da PocketOption envia `updateStream` como placeholder `451` seguido pelo payload `[[asset, timestamp, price]]`; a API junta essas mensagens e atualiza o cache de ticks.

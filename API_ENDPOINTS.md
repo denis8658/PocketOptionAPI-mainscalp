@@ -119,6 +119,9 @@ Resposta esperada:
 |--------|----------|-----------|
 | POST | `/api/candles` | Obtém candles (histórico) |
 | GET | `/api/assets` | Lista ativos disponíveis |
+| GET | `/api/ticks` | Ultimos ticks/precos em cache |
+| GET | `/api/ticks/{asset}` | Ultimo preco conhecido de um ativo |
+| GET | `/api/market/cache` | Resumo do cache de mercado alimentado pelo WebSocket |
 
 ---
 
@@ -245,8 +248,8 @@ curl -X POST "http://localhost:8000/api/order/place" \
 curl -X POST "http://localhost:8000/api/candles" \
   -H "Content-Type: application/json" \
   -d '{
-    "asset": "EURUSD",
-    "timeframe": 5,
+    "asset": "EURUSD_otc",
+    "timeframe": 60,
     "count": 10
   }'
 ```
@@ -263,6 +266,67 @@ curl -X POST "http://localhost:8000/api/candles" \
   },
   ...
 ]
+```
+
+**Observacao:** `timeframe` e enviado ao WebSocket como `period`, em segundos. Chamar `/api/candles` tambem ativa o stream do ativo via `changeSymbol`.
+
+#### Obter Preco Atual / Tick
+
+Depois de chamar `/api/candles` para o ativo, use:
+
+```bash
+curl -X GET "http://localhost:8000/api/ticks/EURUSD_otc"
+```
+
+**Resposta:**
+```json
+{
+  "asset": "EURUSD_otc",
+  "price": 1.13602,
+  "timestamp": 1781415544,
+  "time": "2026-06-14T02:39:04",
+  "source": "stream",
+  "timeframe": null,
+  "received_at": "2026-06-14T00:39:04.685710",
+  "age_seconds": 0
+}
+```
+
+Para ver todos os ticks em cache:
+
+```bash
+curl -X GET "http://localhost:8000/api/ticks"
+```
+
+Para diagnosticar o cache completo:
+
+```bash
+curl -X GET "http://localhost:8000/api/market/cache"
+```
+
+**Formato real observado no WebSocket:**
+
+A PocketOption envia alguns eventos em duas partes Socket.IO. A API junta o placeholder com o payload seguinte:
+
+```text
+451-["updateStream", {"_placeholder": true, "num": 0}]
+[["EURUSD_otc", 1781415544.924, 1.13602]]
+```
+
+O cache de ticks usa o payload como:
+
+```text
+[[asset, timestamp, price]]
+```
+
+Tambem podem chegar historicos como `updateHistoryNewFast`:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "period": 60,
+  "history": [[1781414504.285, 1.13681]]
+}
 ```
 
 #### Obter Ativos
@@ -314,8 +378,8 @@ async def main():
         balance = await client.get_balance()
         print(f"Balanço: {balance['balance']} {balance['currency']}")
         
-        # Obter candles
-        candles = await client.get_candles("EURUSD", 5, count=50)
+        # Obter candles e ativar stream do ativo
+        candles = await client.get_candles("EURUSD_otc", 60, count=50)
         print(f"Candles: {len(candles)}")
         
     finally:
@@ -463,16 +527,20 @@ async function example() {
     response = await fetch(`${BASE_URL}/api/balance`);
     console.log(await response.json());
     
-    // Obter candles
+    // Obter candles e ativar stream do ativo
     response = await fetch(`${BASE_URL}/api/candles`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        asset: "EURUSD",
-        timeframe: 5,
+        asset: "EURUSD_otc",
+        timeframe: 60,
         count: 50
       })
     });
+    console.log(await response.json());
+
+    // Obter preco atual do ativo
+    response = await fetch(`${BASE_URL}/api/ticks/EURUSD_otc`);
     console.log(await response.json());
     
   } catch (error) {
@@ -536,7 +604,7 @@ await client.init_client(ssid="...")
 await client.connect()
 balance = await client.get_balance()
 await client.place_order(asset="EURUSD", direction="CALL", amount=10, duration_seconds=60)
-candles = await client.get_candles(asset="EURUSD", timeframe=5, count=50)
+candles = await client.get_candles(asset="EURUSD_otc", timeframe=60, count=50)
 ```
 
 ### Executar Exemplo

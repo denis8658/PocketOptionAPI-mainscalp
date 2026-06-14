@@ -342,8 +342,8 @@ curl -X GET "http://localhost:8000/api/orders/active"
 curl -X POST "http://localhost:8000/api/candles" \
   -H "Content-Type: application/json" \
   -d '{
-    "asset": "EURUSD",
-    "timeframe": 5,
+    "asset": "EURUSD_otc",
+    "timeframe": 60,
     "count": 50
   }'
 ```
@@ -352,7 +352,7 @@ curl -X POST "http://localhost:8000/api/candles" \
 | Campo | Tipo | Obrigatório | Default | Descrição |
 |-------|------|-------------|---------|-----------|
 | `asset` | string | ✅ | - | Símbolo do ativo |
-| `timeframe` | integer | ✅ | - | Timeframe em minutos |
+| `timeframe` | integer | obrigatorio | - | Periodo/timeframe em segundos usado no WebSocket (`period`) |
 | `count` | integer | ❌ | 100 | Quantidade de candles (1 a 1000) |
 
 **Response (200):**
@@ -377,6 +377,10 @@ curl -X POST "http://localhost:8000/api/candles" \
 
 **Response Schema:** Array de velas com estrutura OHLC
 
+**Observacao sobre `timeframe`:** use segundos, pois esse valor e enviado ao WebSocket da PocketOption como `period`. Exemplos comuns: `5`, `15`, `30`, `60`, `300`, `900`.
+
+**Efeito no stream:** este endpoint tambem envia `changeSymbol` para o WebSocket. Depois de chamar `/api/candles` para um ativo, os endpoints `/api/ticks` e `/api/ticks/{asset}` passam a retornar o preco atual desse ativo alimentado por `updateStream`.
+
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
 | `open` | float | Preço de abertura |
@@ -385,7 +389,7 @@ curl -X POST "http://localhost:8000/api/candles" \
 | `low` | float | Preço mínimo |
 | `timestamp` | integer | Unix timestamp |
 
-**Timeframes Válidos:** `1`, `5`, `15`, `30`, `60`
+**Timeframes validos:** informe em segundos. Exemplos comuns: `5`, `15`, `30`, `60`, `300`, `900`.
 
 **Errors:**
 - **400**: Cliente não inicializado ou ativo inválido
@@ -440,11 +444,12 @@ curl -X GET "http://localhost:8000/api/assets"
 3. POST /api/connect            ← Conectar
 4. GET  /api/balance            ← Ver saldo
 5. GET  /api/assets             ← Ver ativos
-6. POST /api/candles            ← Ver histórico
-7. POST /api/order/place        ← Colocar ordem
-8. GET  /api/orders/active      ← Ver ordens
-9. GET  /api/connection-stats   ← Ver estatísticas
-10. POST /api/disconnect        ← Desconectar
+6. POST /api/candles            <- Ver historico e ativar stream do ativo
+7. GET  /api/ticks/{asset}      <- Ver preco atual do ativo
+8. POST /api/order/place        <- Colocar ordem
+9. GET  /api/orders/active      <- Ver ordens
+10. GET /api/connection-stats   <- Ver estatisticas
+11. POST /api/disconnect        <- Desconectar
 ```
 
 ---
@@ -565,10 +570,32 @@ Tambem retorna `payouts` e `asset_info` quando esses dados ja foram recebidos pe
 ## Market Data Cache
 
 ### GET `/api/ticks`
-Obtem os ultimos ticks/precos em cache.
+Obtem os ultimos ticks/precos em cache, agrupados por ativo.
+
+O cache e alimentado pelo WebSocket da PocketOption. Para um ativo entrar no stream, chame antes `POST /api/candles` para esse ativo; isso envia `changeSymbol` para o WebSocket.
 
 ```bash
 curl -X GET "http://localhost:8000/api/ticks"
+```
+
+**Response (200):**
+```json
+{
+  "ticks": {
+    "EURUSD_otc": {
+      "asset": "EURUSD_otc",
+      "price": 1.13602,
+      "timestamp": 1781415544,
+      "time": "2026-06-14T02:39:04",
+      "source": "stream",
+      "timeframe": null,
+      "received_at": "2026-06-14T00:39:04.685710",
+      "age_seconds": 0
+    }
+  },
+  "count": 1,
+  "timestamp": "2026-06-14T00:39:05.000000"
+}
 ```
 
 ### GET `/api/ticks/{asset}`
@@ -578,9 +605,89 @@ Obtem o ultimo tick/preco conhecido de um ativo.
 curl -X GET "http://localhost:8000/api/ticks/EURUSD_otc"
 ```
 
+**Response (200):**
+```json
+{
+  "asset": "EURUSD_otc",
+  "price": 1.13602,
+  "timestamp": 1781415544,
+  "time": "2026-06-14T02:39:04",
+  "source": "stream",
+  "timeframe": null,
+  "received_at": "2026-06-14T00:39:04.685710",
+  "age_seconds": 0
+}
+```
+
+**Campos importantes:**
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `price` | float | Ultimo preco recebido |
+| `timestamp` | integer | Timestamp Unix do tick em segundos |
+| `time` | string | Data/hora derivada de `timestamp` |
+| `source` | string | `stream` quando vem de `updateStream`; `candles` quando vem do ultimo candle carregado |
+| `timeframe` | integer/null | Periodo do candle quando aplicavel |
+| `received_at` | string | Data/hora em que a API recebeu/processou o tick |
+| `age_seconds` | integer | Idade aproximada do tick no momento em que foi processado |
+
+**404:** se ainda nao houver tick em cache para o ativo, chame `POST /api/candles` para esse ativo e tente novamente.
+
 ### GET `/api/market/cache`
 Obtem resumo do cache de candles e ticks alimentado pelo WebSocket.
 
 ```bash
 curl -X GET "http://localhost:8000/api/market/cache"
+```
+
+**Response (200):**
+```json
+{
+  "connected": true,
+  "ticks": {
+    "EURUSD_otc": {
+      "asset": "EURUSD_otc",
+      "price": 1.13602,
+      "timestamp": 1781415544,
+      "source": "stream",
+      "received_at": "2026-06-14T00:39:04.685710",
+      "age_seconds": 0
+    }
+  },
+  "candles": {
+    "EURUSD_otc_60": {
+      "count": 92,
+      "last_timestamp": 1781414940,
+      "last_close": 1.13576
+    }
+  },
+  "last_stream_update": {
+    "data": [["EURUSD_otc", 1781415544.924, 1.13602]]
+  },
+  "timestamp": "2026-06-14T00:39:05.000000"
+}
+```
+
+### Formato real do WebSocket
+
+A PocketOption envia alguns eventos Socket.IO em duas partes:
+
+```text
+451-["updateStream", {"_placeholder": true, "num": 0}]
+[["EURUSD_otc", 1781415544.924, 1.13602]]
+```
+
+A API junta essas duas mensagens e atualiza o cache de ticks. O payload de `updateStream` usa o formato:
+
+```text
+[[asset, timestamp, price]]
+```
+
+Tambem podem chegar historicos como `updateHistoryNewFast` com:
+
+```json
+{
+  "asset": "EURUSD_otc",
+  "period": 60,
+  "history": [[1781414504.285, 1.13681]]
+}
 ```

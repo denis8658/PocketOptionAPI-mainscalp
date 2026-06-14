@@ -323,7 +323,7 @@ class PlaceOrderRequest(BaseModel):
 class GetCandlesRequest(BaseModel):
     """Request para obter candles"""
     asset: str = Field(..., description="Símbolo do ativo")
-    timeframe: int = Field(..., description="Timeframe em minutos")
+    timeframe: int = Field(..., description="Timeframe/periodo em segundos")
     count: int = Field(default=100, ge=1, le=1000, description="Quantidade de candles (maximo 1000)")
 
 
@@ -913,7 +913,7 @@ async def get_candles(
     ```json
     {
         "asset": "EURUSD",
-        "timeframe": 5,
+        "timeframe": 60,
         "count": 50
     }
     ```
