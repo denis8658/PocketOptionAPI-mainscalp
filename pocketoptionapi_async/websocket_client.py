@@ -133,6 +133,7 @@ class AsyncWebSocketClient:
         self._running = False
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = CONNECTION_SETTINGS["max_reconnect_attempts"]
+        self._pending_socketio_event: Optional[str] = None
 
         # Performance improvements
         self._message_batcher = MessageBatcher()
@@ -530,6 +531,10 @@ class AsyncWebSocketClient:
                     json_data = json.loads(decoded_message)
                     logger.debug(f"Received JSON bytes message: {json_data}")
 
+                    if self._pending_socketio_event:
+                        await self._consume_socketio_attachment(json_data)
+                        return
+
                     if (
                         isinstance(json_data, list)
                         and json_data
@@ -574,6 +579,10 @@ class AsyncWebSocketClient:
 
             logger.debug(f"Received message: {message}")
 
+            if self._pending_socketio_event and message.startswith(("[", "{")):
+                await self._consume_socketio_attachment(json.loads(message))
+                return
+
             # Handle different message types
             if message.startswith("0") and "sid" in message:
                 await self.send_message("40")
@@ -589,6 +598,10 @@ class AsyncWebSocketClient:
                 # Parse JSON message
                 json_part = message.split("-", 1)[1]
                 data = json.loads(json_part)
+                await self._handle_json_message(data)
+
+            elif message.startswith("42") and message[2:].startswith("["):
+                data = json.loads(message[2:])
                 await self._handle_json_message(data)
 
             elif message.startswith("42") and "NotAuthorized" in message:
@@ -634,6 +647,20 @@ class AsyncWebSocketClient:
             await self._emit_event(
                 "auth_error", {"message": "Invalid or expired SSID - Server returned NotAuthorized"}
             )
+
+    async def _consume_socketio_attachment(self, payload: Any) -> None:
+        """Attach the JSON payload that follows a Socket.IO 451 placeholder."""
+        event_type = self._pending_socketio_event
+        self._pending_socketio_event = None
+
+        if not event_type:
+            return
+
+        if event_type == "updateAssets" and isinstance(payload, list):
+            await self._handle_payout_message(payload)
+            return
+
+        await self._handle_json_message([event_type, payload])
 
     async def _process_message_optimized(self, message) -> None:
         """
@@ -700,6 +727,14 @@ class AsyncWebSocketClient:
         event_type = data[0]
         event_data = data[1] if len(data) > 1 else {}
 
+        if (
+            isinstance(event_data, dict)
+            and event_data.get("_placeholder") is True
+            and "num" in event_data
+        ):
+            self._pending_socketio_event = str(event_type)
+            return
+
         # Handle specific events
         if event_type == "successauth":
             await self._emit_event("authenticated", event_data)
@@ -719,7 +754,7 @@ class AsyncWebSocketClient:
         elif event_type == "loadHistoryPeriod":
             await self._emit_event("candles_received", event_data)
 
-        elif event_type == "updateHistoryNew":
+        elif event_type in {"updateHistoryNew", "updateHistoryNewFast"}:
             await self._emit_event("history_update", event_data)
 
         else:

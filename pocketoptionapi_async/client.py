@@ -189,6 +189,7 @@ class AsyncPocketOptionClient:
         self._websocket.add_event_handler("order_opened", self._on_order_opened)
         self._websocket.add_event_handler("order_closed", self._on_order_closed)
         self._websocket.add_event_handler("stream_update", self._on_stream_update)
+        self._websocket.add_event_handler("history_update", self._on_history_update)
         self._websocket.add_event_handler("candles_received", self._on_candles_received)
         self._websocket.add_event_handler("disconnected", self._on_disconnected)
         self._websocket.add_event_handler("payout_update", self._on_payout_update)
@@ -328,6 +329,7 @@ class AsyncPocketOptionClient:
         self._keep_alive_manager.add_event_handler("order_opened", self._on_order_opened)
         self._keep_alive_manager.add_event_handler("order_closed", self._on_order_closed)
         self._keep_alive_manager.add_event_handler("stream_update", self._on_stream_update)
+        self._keep_alive_manager.add_event_handler("history_update", self._on_history_update)
         self._keep_alive_manager.add_event_handler("json_data", self._on_json_data)
         self._keep_alive_manager.add_event_handler("payout_update", self._on_payout_update)
 
@@ -1304,7 +1306,10 @@ class AsyncPocketOptionClient:
         if self.enable_logging:
             logger.debug(f"📡 Stream update: {data}")
 
-        if isinstance(data, dict):
+        if isinstance(data, list):
+            self._last_stream_update = {"data": data}
+            self._update_tick_cache_from_stream_list(data)
+        elif isinstance(data, dict):
             self._last_stream_update = data
             self._update_tick_cache_from_stream(data)
 
@@ -1314,12 +1319,30 @@ class AsyncPocketOptionClient:
 
         await self._emit_event("stream_update", data)
 
+    async def _on_history_update(self, data: Dict[str, Any]) -> None:
+        """Handle incremental history updates as live market data."""
+        if self.enable_logging:
+            logger.debug(f"History update: {data}")
+
+        if isinstance(data, list):
+            self._last_stream_update = {"data": data}
+            self._update_tick_cache_from_stream_list(data)
+        elif isinstance(data, dict):
+            self._last_stream_update = data
+            self._update_tick_cache_from_stream(data)
+
+            if "asset" in data and "period" in data and ("candles" in data or "data" in data):
+                await self._handle_candles_stream(data)
+
+        await self._emit_event("history_update", data)
+
     def _update_tick_from_candles(self, asset: str, timeframe: int, candles: List[Candle]) -> None:
         """Use the latest candle close as the latest known market tick."""
         if not candles:
             return
 
         last_candle = max(candles, key=lambda candle: candle.timestamp)
+        received_at = datetime.now()
         self._tick_cache[asset] = {
             "asset": asset,
             "price": last_candle.close,
@@ -1327,6 +1350,10 @@ class AsyncPocketOptionClient:
             "time": last_candle.timestamp.isoformat(),
             "source": "candles",
             "timeframe": timeframe,
+            "received_at": received_at.isoformat(),
+            "age_seconds": max(
+                0, int(received_at.timestamp()) - int(last_candle.timestamp.timestamp())
+            ),
         }
 
     def _update_tick_cache_from_stream(self, data: Dict[str, Any]) -> None:
@@ -1335,24 +1362,26 @@ class AsyncPocketOptionClient:
         if not asset:
             return
 
-        price = data.get("price") or data.get("rate") or data.get("value") or data.get("close")
-        timestamp = data.get("timestamp") or data.get("time") or int(time.time())
+        price = self._first_present(data, "price", "rate", "value", "close")
+        timestamp = self._first_present(data, "timestamp", "time") or int(time.time())
 
-        candle_data = data.get("data") or data.get("candles")
+        candle_data = data.get("data") or data.get("candles") or data.get("history")
         if isinstance(candle_data, list) and candle_data:
             last_item = candle_data[-1]
             if isinstance(last_item, dict):
-                price = last_item.get("close") or last_item.get("price") or last_item.get("rate") or price
-                timestamp = last_item.get("time") or last_item.get("timestamp") or timestamp
-            elif isinstance(last_item, (list, tuple)) and len(last_item) >= 3:
+                item_price = self._first_present(last_item, "close", "price", "rate")
+                price = item_price if item_price is not None else price
+                timestamp = self._first_present(last_item, "time", "timestamp") or timestamp
+            elif isinstance(last_item, (list, tuple)) and len(last_item) >= 2:
                 timestamp = last_item[0]
-                price = last_item[2]
+                price = last_item[2] if len(last_item) >= 3 else last_item[1]
 
         if price is None:
             return
 
         try:
-            timestamp_int = int(float(timestamp))
+            timestamp_int = self._normalize_unix_seconds(timestamp)
+            received_at = datetime.now()
             self._tick_cache[str(asset)] = {
                 "asset": str(asset),
                 "price": float(price),
@@ -1360,10 +1389,50 @@ class AsyncPocketOptionClient:
                 "time": datetime.fromtimestamp(timestamp_int).isoformat(),
                 "source": "stream",
                 "timeframe": data.get("period"),
+                "received_at": received_at.isoformat(),
+                "age_seconds": max(0, int(received_at.timestamp()) - timestamp_int),
             }
         except Exception as e:
             if self.enable_logging:
                 logger.debug(f"Could not update tick cache from stream: {e}")
+
+    def _update_tick_cache_from_stream_list(self, data: List[Any]) -> None:
+        """Extract ticks from PocketOption stream arrays: [asset, timestamp, price]."""
+        for item in data:
+            if not isinstance(item, (list, tuple)) or len(item) < 3:
+                continue
+
+            asset, timestamp, price = item[0], item[1], item[2]
+            try:
+                timestamp_int = self._normalize_unix_seconds(timestamp)
+                received_at = datetime.now()
+                self._tick_cache[str(asset)] = {
+                    "asset": str(asset),
+                    "price": float(price),
+                    "timestamp": timestamp_int,
+                    "time": datetime.fromtimestamp(timestamp_int).isoformat(),
+                    "source": "stream",
+                    "timeframe": None,
+                    "received_at": received_at.isoformat(),
+                    "age_seconds": max(0, int(received_at.timestamp()) - timestamp_int),
+                }
+            except Exception as e:
+                if self.enable_logging:
+                    logger.debug(f"Could not update tick cache from stream list: {e}")
+
+    @staticmethod
+    def _first_present(data: Dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            if key in data and data[key] is not None:
+                return data[key]
+        return None
+
+    @staticmethod
+    def _normalize_unix_seconds(value: Any) -> int:
+        timestamp = int(float(value))
+        if timestamp > 10_000_000_000:
+            timestamp = int(timestamp / 1000)
+        return timestamp
 
     async def _on_candles_received(self, data: Dict[str, Any]) -> None:
         """Handle candles data received"""
@@ -1410,15 +1479,16 @@ class AsyncPocketOptionClient:
             if not asset or not period:
                 return
             request_id = f"{asset}_{period}"
+            candles = self._parse_stream_candles(data, asset, int(period))
+            if candles:
+                self._candles_cache[f"{asset}_{period}"] = candles
+                self._update_tick_from_candles(asset, int(period), candles)
             if self.enable_logging:
                 logger.info(f"🕯️ Processing candle stream for {asset} ({period}s)")
             if hasattr(self, "_candle_requests") and request_id in self._candle_requests:
                 future = self._candle_requests[request_id]
                 if not future.done():
-                    candles = self._parse_stream_candles(data, asset, period)
                     if candles:
-                        self._candles_cache[f"{asset}_{period}"] = candles
-                        self._update_tick_from_candles(asset, int(period), candles)
                         future.set_result(candles)
                         if self.enable_logging:
                             logger.info(
@@ -1517,18 +1587,22 @@ class AsyncPocketOptionClient:
                     event_data = data[1]
 
                     # Process different event types
-                    if event_type == "authenticated":
+                    if event_type in {"authenticated", "successauth"}:
                         await self._on_authenticated(event_data)
                     elif event_type == "balance_data":
                         await self._on_balance_data(event_data)
-                    elif event_type == "balance_updated":
+                    elif event_type in {"balance_updated", "successupdateBalance"}:
                         await self._on_balance_updated(event_data)
-                    elif event_type == "order_opened":
+                    elif event_type in {"order_opened", "successopenOrder"}:
                         await self._on_order_opened(event_data)
-                    elif event_type == "order_closed":
+                    elif event_type in {"order_closed", "successcloseOrder"}:
                         await self._on_order_closed(event_data)
-                    elif event_type == "stream_update":
+                    elif event_type in {"stream_update", "updateStream"}:
                         await self._on_stream_update(event_data)
+                    elif event_type in {"history_update", "updateHistoryNew"}:
+                        await self._on_history_update(event_data)
+                    elif event_type == "loadHistoryPeriod":
+                        await self._on_candles_received(event_data)
             except Exception as e:
                 logger.error(f"Error processing keep-alive message: {e}")
 

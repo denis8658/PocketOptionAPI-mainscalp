@@ -262,6 +262,61 @@ class TestAsyncPocketOptionClient:
         with pytest.raises(InvalidParameterError):
             await client.get_candles(asset="INVALID_ASSET", timeframe="1m", count=100)
 
+    @pytest.mark.asyncio
+    async def test_stream_candle_update_refreshes_tick_without_pending_request(self, client):
+        """Live candle stream updates should keep the latest tick fresh."""
+        timestamp = int(datetime.now().timestamp())
+
+        await client._on_stream_update({
+            "asset": "EURUSD_otc",
+            "period": 60,
+            "data": [[timestamp, 1.1000, 1.1015, 1.1020, 1.0990]],
+        })
+
+        tick = client.get_latest_tick("EURUSD_otc")
+
+        assert tick is not None
+        assert tick["price"] == 1.1015
+        assert tick["timestamp"] == timestamp
+        assert tick["source"] == "candles"
+        assert "received_at" in tick
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_raw_update_stream_refreshes_tick(self, client):
+        """Persistent mode raw PocketOption event names should update ticks."""
+        timestamp = int(datetime.now().timestamp())
+        message = (
+            '42["updateStream",'
+            f'{{"asset":"EURUSD_otc","period":60,"data":[[{timestamp},1.1,1.102,1.103,1.099]]}}]'
+        )
+
+        await client._on_keep_alive_message({"message": message})
+
+        tick = client.get_latest_tick("EURUSD_otc")
+
+        assert tick is not None
+        assert tick["price"] == 1.102
+        assert tick["timestamp"] == timestamp
+
+    @pytest.mark.asyncio
+    async def test_socketio_placeholder_attachment_refreshes_tick(self, client):
+        """Regular WebSocket mode should join 451 placeholders with their payload."""
+        timestamp = int(datetime.now().timestamp())
+
+        await client._websocket._process_message(
+            '451-["updateStream",{"_placeholder":true,"num":0}]'
+        )
+        await client._websocket._process_message(
+            f'[["EURUSD_otc",{timestamp}.123,1.1035]]'
+        )
+
+        tick = client.get_latest_tick("EURUSD_otc")
+
+        assert tick is not None
+        assert tick["price"] == 1.1035
+        assert tick["timestamp"] == timestamp
+        assert tick["source"] == "stream"
+
     def test_add_event_callback(self, client):
         """Test adding event callback"""
 
