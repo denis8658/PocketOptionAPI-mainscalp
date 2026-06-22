@@ -226,6 +226,18 @@ class ClientConfig(BaseModel):
         default=None,
         description="URL WebSocket opcional copiada do navegador para tentar antes das regioes padrao",
     )
+    origin: Optional[str] = Field(
+        default=None,
+        description="Header Origin opcional copiado/compatível com o navegador",
+    )
+    user_agent: Optional[str] = Field(
+        default=None,
+        description="Header User-Agent opcional copiado do navegador",
+    )
+    cookie: Optional[str] = Field(
+        default=None,
+        description="Header Cookie opcional copiado da mesma sessao do navegador",
+    )
     persistent_connection: bool = Field(default=False, description="Conexão persistente")
     auto_reconnect: bool = Field(default=True, description="Auto-reconexão")
     connection_attempts: int = Field(
@@ -309,6 +321,57 @@ class ClientConfig(BaseModel):
 
         return websocket_url
 
+    @field_validator("origin")
+    @classmethod
+    def normalize_origin(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an optional browser Origin header."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("origin deve ser uma string")
+
+        origin = "".join(value.splitlines()).strip()
+        if (
+            len(origin) >= 2
+            and origin[0] == origin[-1]
+            and origin[0] in ("'", '"')
+        ):
+            origin = origin[1:-1].strip()
+        if not origin:
+            return None
+
+        parsed = urlparse(origin)
+        hostname = parsed.hostname or ""
+        if parsed.scheme not in {"https", "http"}:
+            raise ValueError("origin deve comecar com https:// ou http://")
+        if not (
+            hostname == "pocketoption.com"
+            or hostname.endswith(".pocketoption.com")
+            or hostname == "po.trade"
+            or hostname.endswith(".po.trade")
+        ):
+            raise ValueError("origin deve apontar para dominio PocketOption")
+
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    @field_validator("user_agent", "cookie")
+    @classmethod
+    def normalize_header_value(cls, value: Optional[str]) -> Optional[str]:
+        """Accept optional single-line browser header values."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("header deve ser uma string")
+
+        header_value = " ".join(value.splitlines()).strip()
+        if (
+            len(header_value) >= 2
+            and header_value[0] == header_value[-1]
+            and header_value[0] in ("'", '"')
+        ):
+            header_value = header_value[1:-1].strip()
+        return header_value or None
+
 
 class PlaceOrderRequest(BaseModel):
     """Request para colocar uma ordem"""
@@ -377,6 +440,8 @@ class HealthCheckResponse(BaseModel):
     status: str
     connected: bool
     client_initialized: bool
+    authenticated: bool = False
+    websocket_connected: bool = False
     timestamp: str
 
 
@@ -390,6 +455,17 @@ class ClientManager:
         self.is_connected = False
         self.config: Optional[ClientConfig] = None
         self._connect_lock = asyncio.Lock()
+
+    def _websocket_headers_from_config(self, config: ClientConfig) -> Dict[str, str]:
+        """Build optional browser-like headers for PocketOption WebSocket auth."""
+        headers: Dict[str, str] = {}
+        if config.origin:
+            headers["Origin"] = config.origin
+        if config.user_agent:
+            headers["User-Agent"] = config.user_agent
+        if config.cookie:
+            headers["Cookie"] = config.cookie
+        return headers
     
     async def initialize(self, config: ClientConfig) -> bool:
         """Inicializa o cliente"""
@@ -412,7 +488,8 @@ class ClientManager:
                 platform=platform,
                 persistent_connection=False,
                 auto_reconnect=config.auto_reconnect,
-                enable_logging=True
+                enable_logging=True,
+                websocket_headers=self._websocket_headers_from_config(config),
             )
             self.config = config.model_copy(update={
                 "is_demo": is_demo,
@@ -436,6 +513,9 @@ class ClientManager:
             "ssid": ssid,
             "websocket_url": os.getenv("POCKET_OPTION_WEBSOCKET_URL") or os.getenv("WEBSOCKET_URL"),
             "region": os.getenv("POCKET_OPTION_REGION") or os.getenv("REGION"),
+            "origin": os.getenv("POCKET_OPTION_ORIGIN") or os.getenv("WEBSOCKET_ORIGIN"),
+            "user_agent": os.getenv("POCKET_OPTION_USER_AGENT") or os.getenv("USER_AGENT"),
+            "cookie": os.getenv("POCKET_OPTION_COOKIE") or os.getenv("COOKIE"),
         }
 
         is_demo = os.getenv("POCKET_OPTION_IS_DEMO") or os.getenv("IS_DEMO")
@@ -453,19 +533,29 @@ class ClientManager:
         config = self.config
         client = self.client
         last_errors = getattr(client, "_last_connection_errors", []) if client else []
+        authenticated = bool(client and getattr(client, "is_authenticated", False))
+        websocket_connected = bool(client and client.is_connected)
+        self.is_connected = authenticated
         failure_type = classify_connection_errors(
             last_errors,
             is_demo=config.is_demo if config else None,
             primary_url=config.websocket_url if config else None,
         )
+        if authenticated:
+            failure_type = "none"
         return {
             "client_initialized": client is not None,
-            "connected": self.is_connected,
+            "connected": authenticated,
+            "websocket_connected": websocket_connected,
+            "authenticated": authenticated,
             "demo": config.is_demo if config else None,
             "uid": config.uid if config else None,
             "platform": config.platform if config else None,
             "account_type": "demo" if config and config.is_demo else "live" if config else None,
             "websocket_url_configured": bool(config and config.websocket_url),
+            "origin_configured": bool(config and config.origin),
+            "user_agent_configured": bool(config and config.user_agent),
+            "cookie_configured": bool(config and config.cookie),
             "connection_attempts_configured": config.connection_attempts if config else None,
             "demo_timeout_fallback": config.demo_timeout_fallback if config else None,
             "failure_type": failure_type,
@@ -535,7 +625,8 @@ class ClientManager:
         for attempt in range(1, attempts + 1):
             try:
                 logger.info(f"Tentativa de conexao {attempt}/{attempts}")
-                self.is_connected = await self.client.connect(regions=regions)
+                connected = await self.client.connect(regions=regions)
+                self.is_connected = bool(connected and self.client.is_authenticated)
                 if self.is_connected:
                     logger.info("Conectado ao PocketOption")
                     return True
@@ -553,7 +644,8 @@ class ClientManager:
                             await self.client.disconnect()
                         except Exception as disconnect_error:
                             logger.debug(f"Erro limpando antes do fallback: {disconnect_error}")
-                        self.is_connected = await self.client.connect(regions=fallback_regions)
+                        connected = await self.client.connect(regions=fallback_regions)
+                        self.is_connected = bool(connected and self.client.is_authenticated)
                         if self.is_connected:
                             logger.info("Conectado ao PocketOption usando fallback de regioes")
                             return True
@@ -588,7 +680,7 @@ class ClientManager:
                     )
                 await self.initialize(env_config)
 
-            if self.client and self.client.is_connected:
+            if self.client and self.client.is_authenticated:
                 self.is_connected = True
                 return self.client
 
@@ -621,6 +713,7 @@ class ClientManager:
         """Retorna o cliente ou lança exceção"""
         if not self.client:
             raise HTTPException(status_code=400, detail="Cliente não inicializado")
+        self.is_connected = bool(getattr(self.client, "is_authenticated", False))
         if not self.is_connected:
             raise HTTPException(status_code=503, detail="Não conectado. Use /api/connect")
         return self.client
@@ -673,10 +766,16 @@ async def root():
 @app.get("/health", tags=["Health"], response_model=HealthCheckResponse)
 async def health_check():
     """Verifica saúde do servidor e conexão"""
+    client = client_manager.client
+    authenticated = bool(client and getattr(client, "is_authenticated", False))
+    websocket_connected = bool(client and client.is_connected)
+    client_manager.is_connected = authenticated
     return HealthCheckResponse(
         status="healthy",
-        connected=client_manager.is_connected,
-        client_initialized=client_manager.client is not None,
+        connected=authenticated,
+        client_initialized=client is not None,
+        authenticated=authenticated,
+        websocket_connected=websocket_connected,
         timestamp=datetime.now().isoformat()
     )
 

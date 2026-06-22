@@ -49,6 +49,7 @@ class AsyncPocketOptionClient:
         persistent_connection: bool = False,
         auto_reconnect: bool = True,
         enable_logging: bool = True,
+        websocket_headers: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize async PocketOption client with enhanced monitoring
@@ -63,6 +64,7 @@ class AsyncPocketOptionClient:
             persistent_connection: Enable persistent connection with keep-alive (like old API)
             auto_reconnect: Enable automatic reconnection on disconnection
             enable_logging: Enable detailed logging (default: True)
+            websocket_headers: Optional browser headers to send during WebSocket handshake
         """
         self.raw_ssid = ssid
         self.is_demo = is_demo
@@ -73,6 +75,11 @@ class AsyncPocketOptionClient:
         self.persistent_connection = persistent_connection
         self.auto_reconnect = auto_reconnect
         self.enable_logging = enable_logging
+        self.websocket_headers = {
+            key: value
+            for key, value in (websocket_headers or {}).items()
+            if value is not None and str(value).strip()
+        }
 
         # Configure logging based on preference
         if not enable_logging:
@@ -85,7 +92,7 @@ class AsyncPocketOptionClient:
         self._validate_and_parse_ssid(ssid)
 
         # Core components
-        self._websocket = AsyncWebSocketClient()
+        self._websocket = AsyncWebSocketClient(extra_headers=self.websocket_headers)
         self._balance: Optional[Balance] = None
         self._orders: Dict[str, OrderResult] = {}
         self._active_orders: Dict[str, OrderResult] = {}
@@ -672,6 +679,11 @@ class AsyncPocketOptionClient:
             return self._keep_alive_manager.is_connected
         else:
             return self._websocket.is_connected
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Check whether the current WebSocket session completed PocketOption auth."""
+        return self.is_connected and self._authenticated
 
     @property
     def connection_info(self):

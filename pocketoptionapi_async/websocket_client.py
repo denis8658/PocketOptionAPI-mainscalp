@@ -120,7 +120,7 @@ class AsyncWebSocketClient:
     Professional async WebSocket client for PocketOption
     """
 
-    def __init__(self):
+    def __init__(self, extra_headers: Optional[Dict[str, str]] = None):
         self.websocket: Optional[websockets.legacy.client.WebSocketClientProtocol] = None
         self.connection_info: Optional[ConnectionInfo] = None
         self.server_time: Optional[ServerTime] = None
@@ -134,6 +134,11 @@ class AsyncWebSocketClient:
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = CONNECTION_SETTINGS["max_reconnect_attempts"]
         self._pending_socketio_event: Optional[str] = None
+        self._extra_headers = {
+            key: value
+            for key, value in (extra_headers or {}).items()
+            if value is not None and str(value).strip()
+        }
 
         # Performance improvements
         self._message_batcher = MessageBatcher()
@@ -173,12 +178,15 @@ class AsyncWebSocketClient:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
 
+                headers = dict(DEFAULT_HEADERS)
+                headers.update(self._extra_headers)
+
                 # Connect with timeout
                 ws = await asyncio.wait_for(
                     websockets.legacy.client.connect(
                         url,
                         ssl=ssl_context,
-                        extra_headers=DEFAULT_HEADERS,
+                        extra_headers=headers,
                         ping_interval=CONNECTION_SETTINGS["ping_interval"],
                         ping_timeout=CONNECTION_SETTINGS["ping_timeout"],
                         close_timeout=CONNECTION_SETTINGS["close_timeout"],

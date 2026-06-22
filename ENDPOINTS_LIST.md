@@ -56,6 +56,8 @@ curl -X GET "http://localhost:8000/health"
   "status": "healthy",
   "connected": false,
   "client_initialized": false,
+  "authenticated": false,
+  "websocket_connected": false,
   "timestamp": "2024-01-15T10:30:45.123456"
 }
 ```
@@ -76,11 +78,16 @@ curl -X POST "http://localhost:8000/api/init" \
     "ssid": "42[\"auth\",{\"session\":\"abc123...\",\"isDemo\":1,\"uid\":123456,\"platform\":1}]",
     "persistent_connection": false,
     "auto_reconnect": true,
-    "connect_after_init": true
+    "connect_after_init": true,
+    "websocket_url": "wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket",
+    "origin": "https://pocketoption.com",
+    "user_agent": "Mozilla/5.0 ...",
+    "cookie": "cookie1=value1; cookie2=value2"
   }'
 ```
 
 Para conta real ou demo, envie o SSID completo colado pelo usuario. A API extrai automaticamente `isDemo`, `uid` e `platform` do proprio SSID.
+Se a conexao funcionar no navegador mas falhar no servidor, envie tambem `websocket_url`, `origin`, `user_agent` e, se necessario, `cookie` copiados da mesma sessao do navegador.
 
 **Request Body:**
 | Campo | Tipo | Obrigatório | Default | Descrição |
@@ -90,6 +97,10 @@ Para conta real ou demo, envie o SSID completo colado pelo usuario. A API extrai
 | `region` | string | ❌ | null | Região preferida |
 | `uid` | integer | ❌ | 0 | User ID |
 | `platform` | integer | ❌ | 1 | Platform (1=web, 3=mobile) |
+| `websocket_url` | string | ❌ | null | URL WebSocket real copiada do DevTools |
+| `origin` | string | ❌ | null | Header Origin do navegador, ex: `https://pocketoption.com` |
+| `user_agent` | string | ❌ | null | Header User-Agent copiado do navegador |
+| `cookie` | string | ❌ | null | Header Cookie da mesma sessao, quando necessario |
 | `persistent_connection` | boolean | ❌ | false | Conexão persistente |
 | `auto_reconnect` | boolean | ❌ | true | Auto-reconexão |
 | `connect_after_init` | boolean | ❌ | false | Conectar automaticamente apos inicializar |
@@ -573,6 +584,10 @@ Tambem retorna `payouts` e `asset_info` quando esses dados ja foram recebidos pe
 Obtem os ultimos ticks/precos em cache, agrupados por ativo.
 
 O cache e alimentado pelo WebSocket da PocketOption. Para um ativo entrar no stream, chame antes `POST /api/candles` para esse ativo; isso envia `changeSymbol` para o WebSocket.
+
+**Observacao importante:** candles e ticks devem ser usados em conjunto. O endpoint `POST /api/candles` carrega o historico OHLC e tambem ativa o stream do ativo no WebSocket. Depois disso, `GET /api/ticks` e `GET /api/ticks/{asset}` passam a retornar o preco mais recente recebido pelo `updateStream`.
+
+O tick em tempo real nao traz volume. O payload real do WebSocket para `updateStream` usa o formato `[[asset, timestamp, price]]`. Volume pode existir apenas em dados de candles/historico quando a PocketOption envia esse campo, mas nao no tick atual.
 
 ```bash
 curl -X GET "http://localhost:8000/api/ticks"
