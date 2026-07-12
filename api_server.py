@@ -29,6 +29,7 @@ from pocketoptionapi_async import (
     OrderResult,
     AuthenticationError,
     ConnectionError,
+    InvalidParameterError,
     REGIONS,
 )
 
@@ -1127,13 +1128,27 @@ async def get_ticks(client: AsyncPocketOptionClient = Depends(get_client)):
 
 
 @app.get("/api/ticks/{asset}", tags=["Market Data"], response_model=Dict[str, Any])
-async def get_tick(asset: str, client: AsyncPocketOptionClient = Depends(get_client)):
+async def get_tick(
+    asset: str,
+    wait_timeout: float = Query(default=3.0, ge=0.0, le=10.0),
+    client: AsyncPocketOptionClient = Depends(get_client),
+):
     """Obtém o último tick/preço conhecido de um ativo."""
     tick = client.get_latest_tick(asset)
     if not tick:
+        try:
+            tick = await client.subscribe_ticks(asset, wait_timeout=wait_timeout)
+        except InvalidParameterError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ConnectionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not tick:
         raise HTTPException(
             status_code=404,
-            detail=f"Nenhum tick em cache para {asset}. Chame /api/candles para esse ativo ou aguarde stream.",
+            detail=(
+                f"A assinatura de {asset} foi enviada, mas nenhum tick chegou em "
+                f"{wait_timeout:g}s. Verifique o gateway WebSocket e se o ativo esta aberto."
+            ),
         )
     return tick
 

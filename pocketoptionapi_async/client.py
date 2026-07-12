@@ -185,6 +185,29 @@ class AsyncPocketOptionClient:
         """Return the latest known tick/price for one asset."""
         return self._tick_cache.get(asset)
 
+    async def subscribe_ticks(
+        self, asset: str, timeframe: int = 60, wait_timeout: float = 3.0
+    ) -> Optional[Dict[str, Any]]:
+        """Subscribe to an asset stream and optionally wait for its first tick."""
+        if asset not in ASSETS:
+            raise InvalidParameterError(f"Invalid asset: {asset}")
+        if not self.is_connected:
+            raise ConnectionError("Not connected to PocketOption")
+
+        message = f'42{json.dumps(["changeSymbol", {"asset": asset, "period": timeframe}])}'
+        if self._is_persistent and self._keep_alive_manager:
+            await self._keep_alive_manager.send_message(message)
+        else:
+            await self._websocket.send_message(message)
+
+        deadline = time.monotonic() + max(0.0, wait_timeout)
+        while time.monotonic() < deadline:
+            tick = self.get_latest_tick(asset)
+            if tick:
+                return tick
+            await asyncio.sleep(0.05)
+        return self.get_latest_tick(asset)
+
     def _setup_event_handlers(self):
         """Setup WebSocket event handlers"""
         self._websocket.add_event_handler("authenticated", self._on_authenticated)
