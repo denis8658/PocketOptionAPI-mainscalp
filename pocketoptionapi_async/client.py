@@ -1131,7 +1131,7 @@ class AsyncPocketOptionClient:
 
         return candles
 
-    async def _on_json_data(self, data: Dict[str, Any]) -> None:
+    async def _on_json_data(self, data: Dict[str, Any], emit_events: bool = True) -> None:
         """Handle detailed order data from JSON bytes messages"""
         if not isinstance(data, dict):
             return
@@ -1192,7 +1192,8 @@ class AsyncPocketOptionClient:
                 if self.enable_logging:
                     logger.success(f" Order {request_id} added to tracking from JSON data")
 
-                await self._emit_event("order_opened", data)
+                if emit_events:
+                    await self._emit_event("order_opened", data)
 
         # Check if this is order result data with deals
         elif "deals" in data and isinstance(data["deals"], list):
@@ -1245,7 +1246,8 @@ class AsyncPocketOptionClient:
                                 f" Order {active_order.order_id} completed via JSON data: {status.value} - Profit: ${profit:.2f}"
                             )
                         await self.refresh_balance()
-                        await self._emit_event("order_closed", result)
+                        if emit_events:
+                            await self._emit_event("order_closed", result)
 
     async def _emit_event(self, event: str, data: Any) -> None:
         """Emit event to registered callbacks"""
@@ -1304,12 +1306,20 @@ class AsyncPocketOptionClient:
         """Handle order opened event"""
         if self.enable_logging:
             logger.info(f"Order opened: {data}")
+        # Socket.IO order events must update the same tracking stores as raw
+        # JSON messages. This also correlates the broker id with requestId.
+        await self._on_json_data(data, emit_events=False)
         await self._emit_event("order_opened", data)
 
     async def _on_order_closed(self, data: Dict[str, Any]) -> None:
         """Handle order closed event"""
         if self.enable_logging:
             logger.info(f"📊 Order closed: {data}")
+        # Some gateways send a single deal while others send {"deals": [...] }.
+        # Normalize both forms and perform the active -> completed transition.
+        if isinstance(data, dict):
+            close_data = data if isinstance(data.get("deals"), list) else {"deals": [data]}
+            await self._on_json_data(close_data, emit_events=False)
         await self.refresh_balance()
         await self._emit_event("order_closed", data)
 
